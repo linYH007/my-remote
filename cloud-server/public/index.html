@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>远程控制</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- 首页：ToDesk 风格双栏 -->
+  <div id="appHome" class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+        </div>
+        <span class="brand-name">远程控制</span>
+      </div>
+      <nav class="nav">
+        <button type="button" class="nav-item nav-item--active" data-tab="control">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l5-5-5-5M13.8 12H3"/></svg>
+          远程控制
+        </button>
+        <button type="button" class="nav-item" data-tab="settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+          连接设置
+        </button>
+      </nav>
+      <div class="sidebar-footer">
+        <span class="version">MVP v0.2</span>
+      </div>
+    </aside>
+
+    <main class="main">
+      <!-- 远程控制页 -->
+      <section id="panelControl" class="panel panel--active">
+        <header class="main-header">
+          <h1>远程控制</h1>
+          <p class="subtitle">安全、快速的跨平台远程桌面</p>
+        </header>
+
+        <div class="cards">
+          <!-- 本机信息 -->
+          <article class="card card--host">
+            <div class="card-head">
+              <span class="card-label">本机设备</span>
+              <span id="hostStatus" class="pill pill--wait">检测中…</span>
+            </div>
+            <p class="card-desc">将设备码与密码告知对方，即可允许远程连接</p>
+
+            <div class="device-block">
+              <span class="field-label">设备码</span>
+              <div class="device-row">
+                <span id="displayRoom" class="device-id">—— —— ——</span>
+                <button type="button" id="copyRoomBtn" class="icon-btn" title="复制设备码">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                </button>
+              </div>
+            </div>
+
+            <div class="device-block">
+              <span class="field-label">连接密码</span>
+              <div class="device-row">
+                <span id="displayToken" class="device-pass">••••••</span>
+                <button type="button" id="togglePassBtn" class="icon-btn" title="显示/隐藏">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                </button>
+                <button type="button" id="copyTokenBtn" class="icon-btn" title="复制密码">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                </button>
+              </div>
+            </div>
+
+            <div class="share-box" id="shareBox">
+              <span class="field-label">永久控制地址（加入手机书签）</span>
+              <span id="shareBadge" class="share-badge" hidden>固定</span>
+              <div class="share-row">
+                <code id="shareWebUrl" class="share-url">请先运行「远程控制-首次配置」</code>
+                <button type="button" id="copyShareUrlBtn" class="icon-btn" title="复制链接">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                </button>
+              </div>
+              <p class="share-hint" id="shareHint">不在电脑旁时：打开上方固定链接 → 输入设备码和密码 → 连接。<br/>不要打开 <strong>ws://</strong> 地址。</p>
+              <p id="shareLanList" class="share-lan"></p>
+            </div>
+
+            <button type="button" id="copyAllBtn" class="btn btn--ghost btn--block">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/></svg>
+              复制全部连接信息
+            </button>
+          </article>
+
+          <!-- 连接他人 -->
+          <article class="card card--connect">
+            <div class="card-head">
+              <span class="card-label">控制远程设备</span>
+            </div>
+            <p class="card-desc">输入对方设备码与密码，建立远程连接</p>
+
+            <form id="connectForm" class="connect-form">
+              <div class="mode-switch">
+                <button type="button" class="mode-btn mode-btn--active" data-mode="remote">跨网络</button>
+                <button type="button" class="mode-btn" data-mode="lan">局域网</button>
+              </div>
+
+              <div id="remoteConnectFields">
+                <p class="field-hint field-hint--top">已在控制端打开本页？直接填设备码和密码即可，无需填 ws:// 地址。</p>
+                <label class="field">
+                  <span class="field-label">设备码</span>
+                  <input id="roomInput" class="input input--device" type="text" placeholder="输入设备码" autocomplete="off" />
+                </label>
+                <label class="field">
+                  <span class="field-label">连接密码</span>
+                  <input id="remoteTokenInput" class="input" type="password" placeholder="输入密码" autocomplete="off" />
+                </label>
+                <details class="advanced">
+                  <summary>高级：手动指定服务器</summary>
+                  <label class="field">
+                    <span class="field-label">信令地址（程序内部，勿在浏览器打开）</span>
+                    <input id="signalInput" class="input" type="text" placeholder="留空则自动使用当前页面地址" autocomplete="off" />
+                  </label>
+                </details>
+              </div>
+
+              <div id="lanConnectFields" hidden>
+                <label class="field">
+                  <span class="field-label">连接密码</span>
+                  <input id="tokenInput" class="input" type="password" placeholder="被控端显示的密码" autocomplete="off" />
+                </label>
+                <p class="field-hint">请在被控电脑的局域网地址打开本页，或输入密码直连</p>
+              </div>
+
+              <p id="loginError" class="error"></p>
+
+              <button type="submit" class="btn btn--primary btn--block btn--connect">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                开始连接
+              </button>
+            </form>
+          </article>
+        </div>
+      </section>
+
+      <!-- 设置页 -->
+      <section id="panelSettings" class="panel">
+        <header class="main-header">
+          <h1>连接设置</h1>
+          <p class="subtitle">默认连接参数（保存在浏览器本地）</p>
+        </header>
+        <article class="card card--settings">
+          <label class="field">
+            <span class="field-label">默认信令地址</span>
+            <input id="settingsSignal" class="input" type="text" />
+          </label>
+          <label class="field">
+            <span class="field-label">本机设备码</span>
+            <input id="settingsRoom" class="input" type="text" />
+          </label>
+          <label class="field">
+            <span class="field-label">本机密码</span>
+            <input id="settingsToken" class="input" type="text" />
+          </label>
+          <button type="button" id="saveSettingsBtn" class="btn btn--primary">保存设置</button>
+          <p id="settingsMsg" class="success-msg"></p>
+        </article>
+      </section>
+    </main>
+  </div>
+
+  <!-- 远程会话页 -->
+  <div id="appSession" class="session" hidden>
+    <header class="session-bar">
+      <div class="session-left">
+        <button type="button" id="backHomeBtn" class="icon-btn icon-btn--light" title="返回首页">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+        </button>
+        <div class="session-info">
+          <span id="sessionTitle" class="session-title">远程桌面</span>
+          <span id="status" class="pill pill--on">已连接</span>
+        </div>
+      </div>
+      <div class="session-center">
+        <span id="transport" class="session-stat"></span>
+        <span id="stats" class="session-stat"></span>
+      </div>
+      <div class="session-right">
+        <label class="toolbar-toggle">
+          <input type="checkbox" id="kbdToggle" />
+          <span>键盘</span>
+        </label>
+        <button type="button" id="fullscreenBtn" class="icon-btn icon-btn--light" title="全屏">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
+        </button>
+        <button type="button" id="disconnectBtn" class="btn btn--danger">断开</button>
+      </div>
+    </header>
+    <main id="stage" class="stage">
+      <canvas id="screen" class="screen"></canvas>
+      <div id="sessionLoading" class="session-loading">
+        <div class="spinner"></div>
+        <span>正在建立连接…</span>
+      </div>
+    </main>
+  </div>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="client.js"></script>
+</body>
+</html>

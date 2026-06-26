@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: yuan-cheng-signaling
+    runtime: node
+    plan: free
+    rootDir: cloud-server
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_VERSION
+        value: 20

@@ -1,0 +1,9 @@
+node_modules/
+logs/
+*.log
+.env
+ngrok.yml
+.DS_Store
+
+# 本地配置含密钥(ngrok token 等)，不入库；见 scripts/config.example.cmd
+scripts/config.cmd

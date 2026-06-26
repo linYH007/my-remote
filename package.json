@@ -1,0 +1,32 @@
+{
+  "name": "remote-control-mvp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "远程控制 MVP：局域网直连 + 跨网络 WebRTC/信令中继，被控端采集屏幕并注入鼠标键盘，浏览器作为控制端。",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "host:remote": "node src/remote-host.js",
+    "signaling": "node signaling/server.js",
+    "shortcuts": "node scripts/create-desktop-shortcuts.mjs",
+    "launch": "node scripts/launch.mjs",
+    "stop": "node scripts/stop.mjs",
+    "autostart:install": "node scripts/install-autostart.mjs",
+    "autostart:uninstall": "node scripts/uninstall-autostart.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@ngrok/ngrok": "^1.7.0",
+    "@nut-tree-fork/nut-js": "^4.2.0",
+    "cloudflared": "^0.7.1",
+    "express": "^4.19.2",
+    "https-proxy-agent": "^9.1.0",
+    "localtunnel": "^2.0.2",
+    "sharp": "^0.33.4",
+    "werift": "^0.23.0",
+    "ws": "^8.18.0"
+  }
+}
