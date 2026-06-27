@@ -28,6 +28,7 @@ const fullscreenBtn = document.getElementById('fullscreenBtn');
 const kbdToggle = document.getElementById('kbdToggle');
 const mobileKbdBar = document.getElementById('mobileKbdBar');
 const mobileTextInput = document.getElementById('mobileTextInput');
+const mobileKbdFocusBtn = document.getElementById('mobileKbdFocusBtn');
 const mobileKbdClose = document.getElementById('mobileKbdClose');
 
 const displayRoom = document.getElementById('displayRoom');
@@ -609,22 +610,135 @@ let lastTapPos = null;
 const DOUBLE_TAP_MS = 500;
 
 function sendClick(nx, ny, button) {
-  sendInput({ t: 'm', nx, ny });
-  sendInput({ t: 'd', nx, ny, b: button });
-  sendInput({ t: 'u', b: button });
+  sendInput({ t: 'click', nx, ny, b: button });
 }
 
 function sendDoubleClick(nx, ny, button) {
   sendInput({ t: 'dc', nx, ny, b: button });
 }
 
-canvas.addEventListener('pointerdown', (e) => {
+let lastProcessedTap = 0;
+let pendingTouchTap = null;
+let touchTapTimer = null;
+let touchStart = null;
+let touchMode = 'tap';
+
+function coordsFromClient(clientX, clientY) {
+  return normalizedCoords({ clientX, clientY, button: 0 });
+}
+
+function processCanvasTap(clientX, clientY) {
   if (!connected || pinchActive) return;
-  e.preventDefault();
-  // 点击画面时收起手机软键盘，避免第一次点击被输入框吃掉
-  if (document.activeElement === mobileTextInput) {
-    mobileTextInput.blur();
+  const now = Date.now();
+  if (now - lastProcessedTap < 80) return;
+  lastProcessedTap = now;
+
+  const { nx, ny } = coordsFromClient(clientX, clientY);
+  const button = 'left';
+  const isDoubleTap = lastTapTime > 0
+    && (now - lastTapTime) < DOUBLE_TAP_MS
+    && lastTapPos
+    && Math.hypot(nx - lastTapPos.nx, ny - lastTapPos.ny) < 0.15;
+
+  if (isDoubleTap) {
+    lastTapTime = 0;
+    lastTapPos = null;
+    if (view.zoom > 1.01) {
+      resetViewport();
+    } else {
+      sendClick(nx, ny, button);
+    }
+    return;
   }
+
+  sendClick(nx, ny, button);
+  lastTapTime = now;
+  lastTapPos = { nx, ny };
+}
+
+canvas.addEventListener('touchstart', (e) => {
+  if (!connected || pinchActive || e.touches.length !== 1) return;
+  const t = e.touches[0];
+  touchStart = { x: t.clientX, y: t.clientY, panX: view.panX, panY: view.panY };
+  touchMode = 'tap';
+  pendingTouchTap = { x: t.clientX, y: t.clientY };
+
+  if (document.activeElement === mobileTextInput) {
+    e.preventDefault();
+    mobileTextInput.blur();
+    clearTimeout(touchTapTimer);
+    touchTapTimer = setTimeout(() => {
+      if (pendingTouchTap && touchMode === 'tap') {
+        processCanvasTap(pendingTouchTap.x, pendingTouchTap.y);
+        pendingTouchTap = null;
+      }
+    }, 120);
+  }
+}, { passive: false });
+
+canvas.addEventListener('touchmove', (e) => {
+  if (!connected || !touchStart || pinchActive || e.touches.length !== 1) return;
+  const t = e.touches[0];
+  const dx = t.clientX - touchStart.x;
+  const dy = t.clientY - touchStart.y;
+  if (Math.hypot(dx, dy) <= 10) return;
+
+  touchMode = 'pan';
+  pendingTouchTap = null;
+  clearTimeout(touchTapTimer);
+
+  if (view.zoom > 1.01) {
+    e.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    const { vw, vh } = getVisibleRegion();
+    view.panX = touchStart.panX - (dx / rect.width) * vw;
+    view.panY = touchStart.panY - (dy / rect.height) * vh;
+    applyViewport();
+  }
+}, { passive: false });
+
+canvas.addEventListener('touchend', (e) => {
+  if (!connected || pinchActive || e.changedTouches.length !== 1) return;
+
+  if (touchMode === 'pan') {
+    touchStart = null;
+    touchMode = 'tap';
+    pendingTouchTap = null;
+    return;
+  }
+
+  if (!pendingTouchTap) {
+    touchStart = null;
+    return;
+  }
+
+  const t = e.changedTouches[0];
+  const dx = t.clientX - pendingTouchTap.x;
+  const dy = t.clientY - pendingTouchTap.y;
+  if (Math.hypot(dx, dy) > 25) {
+    pendingTouchTap = null;
+    touchStart = null;
+    clearTimeout(touchTapTimer);
+    return;
+  }
+
+  e.preventDefault();
+  clearTimeout(touchTapTimer);
+  processCanvasTap(t.clientX, t.clientY);
+  pendingTouchTap = null;
+  touchStart = null;
+}, { passive: false });
+
+canvas.addEventListener('touchcancel', () => {
+  pendingTouchTap = null;
+  touchStart = null;
+  touchMode = 'tap';
+  clearTimeout(touchTapTimer);
+}, { passive: true });
+
+canvas.addEventListener('pointerdown', (e) => {
+  if (!connected || pinchActive || isTouchDevice) return;
+  e.preventDefault();
   canvas.setPointerCapture?.(e.pointerId);
   pointerActive = true;
   pointerIntent = 'click';
@@ -660,7 +774,7 @@ canvas.addEventListener('pointermove', (e) => {
 });
 
 canvas.addEventListener('pointerup', (e) => {
-  if (!connected || pinchActive) return;
+  if (!connected || pinchActive || isTouchDevice) return;
   const wasPan = pointerIntent === 'pan';
   pointerActive = false;
 
@@ -669,30 +783,7 @@ canvas.addEventListener('pointerup', (e) => {
     return;
   }
 
-  const { nx, ny } = normalizedCoords(e);
-  const button = buttonName(e.button);
-  const now = Date.now();
-  const isDoubleTap = lastTapTime > 0
-    && (now - lastTapTime) < DOUBLE_TAP_MS
-    && lastTapPos
-    && Math.hypot(nx - lastTapPos.nx, ny - lastTapPos.ny) < 0.15;
-
-  if (isDoubleTap) {
-    lastTapTime = 0;
-    lastTapPos = null;
-    if (view.zoom > 1.01) {
-      resetViewport();
-    } else {
-      // 第一下已单击，第二下再单击一次 = 电脑端双击
-      sendClick(nx, ny, button);
-    }
-    pointerStart = null;
-    return;
-  }
-
-  sendClick(nx, ny, button);
-  lastTapTime = now;
-  lastTapPos = { nx, ny };
+  processCanvasTap(e.clientX, e.clientY);
   pointerStart = null;
 });
 
@@ -778,15 +869,13 @@ function stepFromDelta(d) {
   return Math.sign(d) * Math.max(1, Math.round(Math.abs(d) / 100));
 }
 
-// 手机软键盘：勾选「键盘」后弹出输入栏
+// 手机软键盘：勾选「键盘」只显示打字栏，不自动弹出系统键盘
 let mobileTextPrevLen = 0;
 
 function setMobileKeyboard(on) {
   if (!isTouchDevice) return;
   mobileKbdBar.hidden = !on;
-  if (on) {
-    setTimeout(() => mobileTextInput.focus(), 120);
-  } else {
+  if (!on) {
     mobileTextInput.blur();
     mobileTextInput.value = '';
     mobileTextPrevLen = 0;
@@ -795,6 +884,10 @@ function setMobileKeyboard(on) {
 
 kbdToggle.addEventListener('change', () => {
   setMobileKeyboard(kbdToggle.checked);
+});
+
+mobileKbdFocusBtn.addEventListener('click', () => {
+  mobileTextInput.focus();
 });
 
 mobileKbdClose.addEventListener('click', () => {

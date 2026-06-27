@@ -13,6 +13,9 @@ export async function handleInputMessage(msg, { getLogicalSize, input }) {
       await input.moveMouse(clamp01(msg.nx) * width, clamp01(msg.ny) * height);
       await input.mouseDown(msg.b);
       break;
+    case 'click':
+      await input.clickMouse(msg.b, clamp01(msg.nx) * width, clamp01(msg.ny) * height);
+      break;
     case 'u':
       await input.mouseUp(msg.b);
       break;

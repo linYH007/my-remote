@@ -63,6 +63,12 @@ export async function mouseUp(button = 'left') {
   await mouse.releaseButton(buttonMap[button] ?? Button.LEFT);
 }
 
+export async function clickMouse(button = 'left', x, y) {
+  const b = buttonMap[button] ?? Button.LEFT;
+  await mouse.setPosition(new Point(Math.round(x), Math.round(y)));
+  await mouse.click(b);
+}
+
 export async function doubleClick(button = 'left', x, y) {
   const b = buttonMap[button] ?? Button.LEFT;
   if (x != null && y != null) {
