@@ -66,6 +66,11 @@ let hostPollTimer = null;
 let gotFirstFrame = false;
 let serverInfo = null;
 const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+let manualDisconnect = false;
+let reconnectTimer = null;
+let pingTimer = null;
+let sessionParams = null;
+let reconnectAttempt = 0;
 
 // ========== 设置持久化 ==========
 
@@ -193,12 +198,44 @@ function setConnected(on) {
   connected = on;
   statusEl.textContent = on ? '已连接' : '未连接';
   statusEl.className = on ? 'pill pill--on' : 'pill pill--off';
-  if (!on) {
+  if (!on && manualDisconnect) {
     transportEl.textContent = '';
     transportMode = '';
     hideMobileKeyboardBar();
     showHome();
   }
+}
+
+function setReconnecting() {
+  connected = false;
+  statusEl.textContent = '重连中…';
+  statusEl.className = 'pill pill--wait';
+}
+
+function stopPing() {
+  if (pingTimer) {
+    clearInterval(pingTimer);
+    pingTimer = null;
+  }
+}
+
+function startPing() {
+  stopPing();
+  pingTimer = setInterval(() => {
+    if (ws?.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'ping', t: Date.now() }));
+    }
+  }, 18000);
+}
+
+function scheduleReconnect() {
+  clearTimeout(reconnectTimer);
+  if (!sessionParams || manualDisconnect) return;
+  const delay = Math.min(2000 + reconnectAttempt * 1000, 8000);
+  reconnectTimer = setTimeout(() => {
+    reconnectAttempt += 1;
+    connectRemote(sessionParams.signalUrl, sessionParams.room, sessionParams.token, true);
+  }, delay);
 }
 
 function setTransport(mode) {
@@ -373,39 +410,34 @@ fullscreenBtn.addEventListener('click', () => {
 });
 
 function cleanupConnection() {
+  stopPing();
   if (dc) { try { dc.close(); } catch { /* ignore */ } dc = null; }
   if (pc) { pc.close(); pc = null; }
-  if (ws) { ws.close(); ws = null; }
+  if (ws) {
+    ws.onclose = null;
+    ws.onerror = null;
+    ws.onmessage = null;
+    ws.close();
+    ws = null;
+  }
   connected = false;
   transportMode = '';
 }
 
 function disconnect() {
+  manualDisconnect = true;
+  clearTimeout(reconnectTimer);
   hideMobileKeyboardBar();
   cleanupConnection();
   setConnected(false);
 }
 
-function connectLan(token) {
-  cleanupConnection();
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  ws = new WebSocket(`${proto}://${location.host}/?token=${encodeURIComponent(token)}`);
-  ws.binaryType = 'arraybuffer';
-
-  ws.onopen = () => { setConnected(true); setTransport('lan'); };
-  ws.onmessage = (event) => {
-    if (typeof event.data === 'string') { handleInfoMessage(event.data); return; }
-    onFrame(event.data);
-  };
-  ws.onclose = (event) => {
-    setConnected(false);
-    if (event.code === 4001) loginError.textContent = '密码错误';
-    showToast(event.code === 4001 ? '密码错误' : '连接已断开');
-  };
-  ws.onerror = () => showToast('连接失败');
-}
-
-function connectRemote(signalUrl, room, token) {
+function connectRemote(signalUrl, room, token, isReconnect = false) {
+  sessionParams = { signalUrl, room, token };
+  if (!isReconnect) {
+    manualDisconnect = false;
+    reconnectAttempt = 0;
+  }
   cleanupConnection();
   ws = new WebSocket(signalUrl);
   ws.binaryType = 'arraybuffer';
@@ -422,7 +454,14 @@ function connectRemote(signalUrl, room, token) {
 
     switch (msg.type) {
       case 'joined':
+        reconnectAttempt = 0;
         setConnected(true);
+        startPing();
+        break;
+      case 'pong':
+        break;
+      case 'peer-present':
+        showToast('被控端在线，等待画面…');
         break;
       case 'offer':
         await handleOffer(msg.sdp);
@@ -438,23 +477,55 @@ function connectRemote(signalUrl, room, token) {
       case 'mode':
         setTransport(msg.mode === 'webrtc' ? 'webrtc' : 'relay');
         break;
-      case 'text-focus':
-        if (isTouchDevice) onRemoteTextFocus(!!msg.focused);
-        break;
       case 'error':
         loginError.textContent = msg.message || '连接失败';
         showToast(msg.message || '连接失败');
+        manualDisconnect = true;
         disconnect();
         break;
       case 'peer-left':
-        showToast('被控端已断开');
-        disconnect();
+        showToast('被控端暂时离线，等待恢复…');
+        transportEl.textContent = '';
+        transportMode = '';
         break;
     }
   };
 
-  ws.onclose = () => { setConnected(false); showToast('连接已断开'); };
-  ws.onerror = () => { showToast('无法连接信令服务器'); loginError.textContent = '信令服务器连接失败'; };
+  ws.onclose = () => {
+    stopPing();
+    if (manualDisconnect) {
+      setConnected(false);
+      showToast('连接已断开');
+      return;
+    }
+    setReconnecting();
+    showToast('连接断开，正在重连…');
+    scheduleReconnect();
+  };
+  ws.onerror = () => {
+    if (!manualDisconnect) showToast('网络波动，正在重连…');
+  };
+}
+
+function connectLan(token) {
+  manualDisconnect = false;
+  cleanupConnection();
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}/?token=${encodeURIComponent(token)}`);
+  ws.binaryType = 'arraybuffer';
+
+  ws.onopen = () => { setConnected(true); setTransport('lan'); };
+  ws.onmessage = (event) => {
+    if (typeof event.data === 'string') { handleInfoMessage(event.data); return; }
+    onFrame(event.data);
+  };
+  ws.onclose = (event) => {
+    manualDisconnect = true;
+    setConnected(false);
+    if (event.code === 4001) loginError.textContent = '密码错误';
+    showToast(event.code === 4001 ? '密码错误' : '连接已断开');
+  };
+  ws.onerror = () => showToast('连接失败');
 }
 
 async function handleOffer(sdp) {
@@ -629,12 +700,8 @@ function coordsFromClient(clientX, clientY) {
   return normalizedCoords({ clientX, clientY, button: 0 });
 }
 
-let lastCanvasTapAt = 0;
-const TAP_FOCUS_WINDOW_MS = 3000;
-
 function processCanvasTap(clientX, clientY) {
   if (!connected || pinchActive) return;
-  lastCanvasTapAt = Date.now();
   const now = Date.now();
   if (now - lastProcessedTap < 80) return;
   lastProcessedTap = now;
@@ -875,9 +942,8 @@ function stepFromDelta(d) {
   return Math.sign(d) * Math.max(1, Math.round(Math.abs(d) / 100));
 }
 
-// 手机软键盘：仅在电脑端检测到输入框聚焦时显示
+// 手机软键盘：仅通过顶部「打字」按钮手动打开
 let mobileTextPrevLen = 0;
-let remoteTextFocused = false;
 
 function showMobileKeyboardBar(show) {
   if (!isTouchDevice) return;
@@ -885,24 +951,10 @@ function showMobileKeyboardBar(show) {
 }
 
 function hideMobileKeyboardBar() {
-  remoteTextFocused = false;
   showMobileKeyboardBar(false);
   mobileTextInput.blur();
   mobileTextInput.value = '';
   mobileTextPrevLen = 0;
-}
-
-function onRemoteTextFocus(focused) {
-  remoteTextFocused = focused;
-  if (focused) {
-    // 必须是用户刚点过画面后的检测结果，避免电脑其他窗口光标误触发
-    if (Date.now() - lastCanvasTapAt > TAP_FOCUS_WINDOW_MS) return;
-    showMobileKeyboardBar(true);
-    mobileTextInput.placeholder = '电脑输入框已选中，点此处打字…';
-    showToast('点下方栏开始打字');
-  } else {
-    hideMobileKeyboardBar();
-  }
 }
 
 function openTypingBar() {

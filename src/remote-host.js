@@ -6,7 +6,6 @@ import { captureFrame, getLogicalSize, refreshLogicalSize } from './capture.js';
 import * as input from './input.js';
 import { handleInputMessage } from './protocol.js';
 import { getRtcConfiguration } from './ice-config.js';
-import { hasTextCaretFocus } from './text-focus.js';
 
 const SIGNAL_URL = process.env.SIGNAL_URL;
 const PROXY_URL = process.env.PROXY_URL || '';
@@ -33,7 +32,23 @@ let transport = null; // 'webrtc' | 'relay'
 let captureTimer = null;
 let busy = false;
 let webrtcTimer = null;
-let lastTextFocus = false;
+let signalPingTimer = null;
+
+function startSignalPing() {
+  if (signalPingTimer) clearInterval(signalPingTimer);
+  signalPingTimer = setInterval(() => {
+    if (ws?.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'ping', t: Date.now() }));
+    }
+  }, 18000);
+}
+
+function stopSignalPing() {
+  if (signalPingTimer) {
+    clearInterval(signalPingTimer);
+    signalPingTimer = null;
+  }
+}
 
 function connectSignaling() {
   const opts = {};
@@ -45,6 +60,7 @@ function connectSignaling() {
 
   ws.on('open', () => {
     console.log('[signaling] 已连接:', SIGNAL_URL, PROXY_URL ? `(经代理 ${PROXY_URL})` : '');
+    startSignalPing();
     ws.send(JSON.stringify({ type: 'join', role: 'host', room: ROOM, token: TOKEN }));
   });
 
@@ -62,9 +78,10 @@ function connectSignaling() {
       case 'joined':
         console.log('[signaling] 已注册房间:', ROOM);
         break;
+      case 'pong':
+        break;
       case 'peer-joined':
         console.log('[signaling] 控制端已加入，开始建立连接…');
-        lastTextFocus = false;
         if (SKIP_WEBRTC) {
           await activateTransport('relay');
         } else {
@@ -88,7 +105,6 @@ function connectSignaling() {
         break;
       case 'peer-left':
         console.log('[signaling] 控制端已断开');
-        lastTextFocus = false;
         stopCapture();
         cleanupWebRtc();
         transport = null;
@@ -99,10 +115,11 @@ function connectSignaling() {
   });
 
   ws.on('close', () => {
-    console.log('[signaling] 连接断开，5 秒后重连…');
+    console.log('[signaling] 连接断开，2 秒后重连…');
+    stopSignalPing();
     stopCapture();
     cleanupWebRtc();
-    setTimeout(connectSignaling, 5000);
+    setTimeout(connectSignaling, 2000);
   });
 
   ws.on('error', (err) => {
@@ -232,28 +249,9 @@ function stopCapture() {
   }
 }
 
-async function checkAndNotifyTextFocus() {
-  const focused = await hasTextCaretFocus();
-  if (focused !== lastTextFocus) {
-    lastTextFocus = focused;
-    sendSignal({ type: 'text-focus', focused });
-    console.log('[text-focus]', focused ? '输入框已聚焦' : '输入框失焦');
-  }
-  return focused;
-}
-
-function scheduleFocusCheckAfterClick() {
-  for (const delay of [180, 500]) {
-    setTimeout(() => checkAndNotifyTextFocus().catch(() => {}), delay);
-  }
-}
-
 async function handleInput(msg) {
   try {
     await handleInputMessage(msg, { getLogicalSize, input });
-    if (msg.t === 'click' || msg.t === 'd' || msg.t === 'dc') {
-      scheduleFocusCheckAfterClick();
-    }
   } catch (err) {
     console.error('[input] 注入失败:', err.message);
   }

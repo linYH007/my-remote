@@ -118,7 +118,11 @@ wss.on('connection', (ws) => {
   ws.roomId = null;
   ws.role = null;
 
+  ws.isAlive = true;
+  ws.on('pong', () => { ws.isAlive = true; });
+
   ws.on('message', (raw, isBinary) => {
+    ws.isAlive = true;
     if (isBinary) {
       if (!ws.roomId || !ws.role) return;
       const room = rooms.get(ws.roomId);
@@ -145,10 +149,9 @@ wss.on('connection', (ws) => {
         }
         const room = getRoom(roomId);
         if (role === 'host') {
-          if (room.host && room.host.readyState === room.host.OPEN) {
-            sendJson(ws, { type: 'error', message: 'room already has host' });
-            ws.close();
-            return;
+          if (room.host) {
+            try { room.host.close(); } catch { /* ignore */ }
+            room.host = null;
           }
           room.host = ws;
           room.token = token;
@@ -164,9 +167,7 @@ wss.on('connection', (ws) => {
             return;
           }
           if (room.client && room.client.readyState === room.client.OPEN) {
-            sendJson(ws, { type: 'error', message: 'room already has client' });
-            ws.close();
-            return;
+            try { room.client.close(); } catch { /* ignore */ }
           }
           room.client = ws;
           ws.roomId = roomId;
@@ -189,6 +190,9 @@ wss.on('connection', (ws) => {
         if (!ws.roomId || !ws.role) return;
         forwardJson(rooms.get(ws.roomId), ws.role, msg);
         break;
+      case 'ping':
+        sendJson(ws, { type: 'pong', t: msg.t || Date.now() });
+        break;
       default:
         break;
     }
@@ -198,6 +202,15 @@ wss.on('connection', (ws) => {
     if (ws.roomId && ws.role) cleanupRole(ws.roomId, ws.role);
   });
 });
+
+const heartbeat = setInterval(() => {
+  for (const ws of wss.clients) {
+    if (ws.isAlive === false) { ws.terminate(); continue; }
+    ws.isAlive = false;
+    try { ws.ping(); } catch { /* ignore */ }
+  }
+}, 55000);
+wss.on('close', () => clearInterval(heartbeat));
 
 server.listen(PORT, () => {
   console.log('================ 信令服务器已启动 ================');

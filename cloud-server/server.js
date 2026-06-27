@@ -80,6 +80,7 @@ wss.on('connection', (ws) => {
   ws.on('pong', () => { ws.isAlive = true; });
 
   ws.on('message', (raw, isBinary) => {
+    ws.isAlive = true;
     if (isBinary) {
       if (!ws.roomId || !ws.role) return;
       const room = rooms.get(ws.roomId);
@@ -106,10 +107,10 @@ wss.on('connection', (ws) => {
         }
         const room = getRoom(roomId);
         if (role === 'host') {
-          if (room.host && room.host.readyState === room.host.OPEN) {
-            sendJson(ws, { type: 'error', message: 'room already has host' });
-            ws.close();
-            return;
+          // 被控端重连时替换旧连接，避免「room already has host」导致掉线
+          if (room.host) {
+            try { room.host.close(); } catch { /* ignore */ }
+            room.host = null;
           }
           room.host = ws;
           room.token = token;
@@ -125,9 +126,7 @@ wss.on('connection', (ws) => {
             return;
           }
           if (room.client && room.client.readyState === room.client.OPEN) {
-            sendJson(ws, { type: 'error', message: 'room already has client' });
-            ws.close();
-            return;
+            try { room.client.close(); } catch { /* ignore */ }
           }
           room.client = ws;
           ws.roomId = roomId;
@@ -147,6 +146,9 @@ wss.on('connection', (ws) => {
         if (!ws.roomId || !ws.role) return;
         forwardJson(rooms.get(ws.roomId), ws.role, msg);
         break;
+      case 'ping':
+        sendJson(ws, { type: 'pong', t: msg.t || Date.now() });
+        break;
       default:
         break;
     }
@@ -157,14 +159,14 @@ wss.on('connection', (ws) => {
   });
 });
 
-// 心跳：清理掉线连接，避免云平台空闲断开后残留死房间
+// 心跳保活（Render/移动网络易断，间隔放宽）
 const heartbeat = setInterval(() => {
   for (const ws of wss.clients) {
     if (ws.isAlive === false) { ws.terminate(); continue; }
     ws.isAlive = false;
     try { ws.ping(); } catch { /* ignore */ }
   }
-}, 30000);
+}, 55000);
 wss.on('close', () => clearInterval(heartbeat));
 
 server.listen(PORT, () => {
