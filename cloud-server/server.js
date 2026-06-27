@@ -8,7 +8,18 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 8080;
 
 const app = express();
-app.use(express.static(path.join(__dirname, 'public')));
+// 禁止缓存 HTML/JS/CSS，确保手机端每次都拿到最新界面（解决「更新后手机仍是旧页面」问题）
+app.use(express.static(path.join(__dirname, 'public'), {
+  etag: false,
+  lastModified: false,
+  setHeaders(res, filePath) {
+    if (/\.(html|js|css)$/i.test(filePath)) {
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+    }
+  },
+}));
 
 app.get('/healthz', (_req, res) => res.json({ ok: true, rooms: rooms.size }));
 

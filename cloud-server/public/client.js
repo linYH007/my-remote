@@ -242,7 +242,11 @@ function setTransport(mode) {
   transportMode = mode;
   const labels = { lan: '局域网', webrtc: 'P2P 直连', relay: '中继模式' };
   transportEl.textContent = labels[mode] || mode;
-  if (mode) sessionLoading.hidden = true;
+  if (mode) {
+    sessionLoading.hidden = true;
+    // 通道建立后同步当前可视区域，避免被控端沿用上次的裁剪区域
+    setTimeout(() => { if (connected) sendViewNow(); }, 200);
+  }
 }
 
 function updateHostDisplay() {
@@ -579,17 +583,40 @@ function getVisibleRegion() {
   };
 }
 
+// 区域高清：不再用 CSS 放大整帧（会糊），而是把可视区域发给被控端，
+// 被控端只裁剪并按原生像素发送该区域，放大后依然清晰。
+let lastViewSent = 0;
+let viewSendTimer = null;
+
+function sendViewNow() {
+  const full = view.zoom <= 1.01;
+  const { x0, y0, vw, vh } = getVisibleRegion();
+  lastViewSent = Date.now();
+  sendInput({ t: 'view', full, x0, y0, vw, vh });
+}
+
+function sendViewThrottled() {
+  clearTimeout(viewSendTimer);
+  const since = Date.now() - lastViewSent;
+  if (since >= 110) {
+    sendViewNow();
+  } else {
+    viewSendTimer = setTimeout(sendViewNow, 110 - since);
+  }
+}
+
 function applyViewport() {
   view.zoom = clamp(view.zoom, VIEW_ZOOM_MIN, VIEW_ZOOM_MAX);
   const { vw, vh } = getVisibleRegion();
   view.panX = clamp(view.panX, vw / 2, 1 - vw / 2);
   view.panY = clamp(view.panY, vh / 2, 1 - vh / 2);
-  screenWrap.style.transformOrigin = `${view.panX * 100}% ${view.panY * 100}%`;
-  screenWrap.style.transform = `scale(${view.zoom})`;
+  // 画面由被控端按区域采集，这里不做 CSS 缩放
+  screenWrap.style.transform = 'none';
   zoomHint.hidden = view.zoom <= 1.01;
   if (!zoomHint.hidden) {
-    zoomHint.textContent = `${view.zoom.toFixed(1)}× · 双指缩放 · 放大后双击还原`;
+    zoomHint.textContent = `${view.zoom.toFixed(1)}× 高清 · 双指缩放 · 双击还原`;
   }
+  sendViewThrottled();
 }
 
 function resetViewport() {
@@ -909,9 +936,7 @@ stage.addEventListener('touchmove', (e) => {
   const dist = pinchDistance(e.touches);
   if (pinchStartDist > 0) {
     view.zoom = pinchStartZoom * (dist / pinchStartDist);
-    const c = pinchCenterNorm(e.touches);
-    view.panX = c.nx;
-    view.panY = c.ny;
+    // 中心在捏合开始时已锁定，缩放过程中不再变更，避免区域采集延迟导致抖动
     applyViewport();
   }
 }, { passive: false });

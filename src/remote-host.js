@@ -31,6 +31,7 @@ let dc = null;
 let transport = null; // 'webrtc' | 'relay'
 let captureTimer = null;
 let busy = false;
+let currentRegion = null; // 控制端放大时的可视区域，用于裁剪发送
 let webrtcTimer = null;
 let signalPingTimer = null;
 
@@ -228,7 +229,7 @@ function startCapture() {
 
     busy = true;
     try {
-      const frame = await captureFrame({ width: FRAME_WIDTH, quality: FRAME_QUALITY });
+      const frame = await captureFrame({ width: FRAME_WIDTH, quality: FRAME_QUALITY, region: currentRegion });
       if (transport === 'webrtc' && dc?.readyState === 'open') {
         dc.send(frame);
       } else if (transport === 'relay' && ws?.readyState === WebSocket.OPEN) {
@@ -250,6 +251,15 @@ function stopCapture() {
 }
 
 async function handleInput(msg) {
+  // 控制端可视区域更新：放大时只发送该区域，保证清晰
+  if (msg && msg.t === 'view') {
+    if (msg.full) {
+      currentRegion = null;
+    } else {
+      currentRegion = { x0: msg.x0, y0: msg.y0, vw: msg.vw, vh: msg.vh };
+    }
+    return;
+  }
   try {
     await handleInputMessage(msg, { getLogicalSize, input });
   } catch (err) {
