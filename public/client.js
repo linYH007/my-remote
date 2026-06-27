@@ -25,6 +25,7 @@ const loginError = document.getElementById('loginError');
 const disconnectBtn = document.getElementById('disconnectBtn');
 const backHomeBtn = document.getElementById('backHomeBtn');
 const fullscreenBtn = document.getElementById('fullscreenBtn');
+const screenshotBtn = document.getElementById('screenshotBtn');
 const typeBtn = document.getElementById('typeBtn');
 const mobileKbdBar = document.getElementById('mobileKbdBar');
 const mobileTextInput = document.getElementById('mobileTextInput');
@@ -412,6 +413,45 @@ fullscreenBtn.addEventListener('click', () => {
     document.exitFullscreen?.();
   }
 });
+
+function screenshotFilename() {
+  const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  return `remote-${ts}.png`;
+}
+
+async function takeScreenshot() {
+  if (!connected || !gotFirstFrame || !canvas.width || !canvas.height) {
+    showToast('暂无画面，请等待连接');
+    return;
+  }
+  try {
+    const blob = await new Promise((resolve, reject) => {
+      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('empty'))), 'image/png');
+    });
+    const name = screenshotFilename();
+    const file = new File([blob], name, { type: 'image/png' });
+
+    if (navigator.canShare?.({ files: [file] })) {
+      await navigator.share({ files: [file], title: '远程截图' });
+      showToast('截图已保存');
+      return;
+    }
+
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    showToast('截图已保存');
+  } catch (err) {
+    if (err?.name !== 'AbortError') showToast('截图失败');
+  }
+}
+
+screenshotBtn.addEventListener('click', () => { takeScreenshot(); });
 
 function cleanupConnection() {
   stopPing();
