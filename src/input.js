@@ -63,6 +63,13 @@ export async function mouseUp(button = 'left') {
   await mouse.releaseButton(buttonMap[button] ?? Button.LEFT);
 }
 
+export async function doubleClick(button = 'left', x, y) {
+  if (x != null && y != null) {
+    await mouse.setPosition(new Point(Math.round(x), Math.round(y)));
+  }
+  await mouse.doubleClick(buttonMap[button] ?? Button.LEFT);
+}
+
 /**
  * 滚轮滚动，dx/dy 为滚动步数（已在控制端归一化为较小整数）。
  */

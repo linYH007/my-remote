@@ -16,6 +16,13 @@ export async function handleInputMessage(msg, { getLogicalSize, input }) {
     case 'u':
       await input.mouseUp(msg.b);
       break;
+    case 'dc':
+      await input.doubleClick(
+        msg.b,
+        clamp01(msg.nx) * width,
+        clamp01(msg.ny) * height,
+      );
+      break;
     case 'w':
       await input.scroll(msg.dx | 0, msg.dy | 0);
       break;

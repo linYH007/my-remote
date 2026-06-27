@@ -382,6 +382,7 @@ function cleanupConnection() {
 function disconnect() {
   kbdToggle.checked = false;
   setMobileKeyboard(false);
+  clearPendingClick();
   cleanupConnection();
   setConnected(false);
 }
@@ -514,7 +515,7 @@ function applyViewport() {
   screenWrap.style.transform = `scale(${view.zoom})`;
   zoomHint.hidden = view.zoom <= 1.01;
   if (!zoomHint.hidden) {
-    zoomHint.textContent = `${view.zoom.toFixed(1)}× · 双指缩放 · 双击还原`;
+    zoomHint.textContent = `${view.zoom.toFixed(1)}× · 双指缩放 · 放大后双击还原`;
   }
 }
 
@@ -605,6 +606,31 @@ let pinchActive = false;
 let pinchStartDist = 0;
 let pinchStartZoom = 1;
 let lastTapTime = 0;
+let lastTapPos = null;
+let pendingClickTimer = null;
+const DOUBLE_TAP_MS = 350;
+
+function clearPendingClick() {
+  if (pendingClickTimer) {
+    clearTimeout(pendingClickTimer);
+    pendingClickTimer = null;
+  }
+}
+
+function scheduleSingleClick(nx, ny, button) {
+  clearPendingClick();
+  pendingClickTimer = setTimeout(() => {
+    pendingClickTimer = null;
+    sendInput({ t: 'm', nx, ny });
+    sendInput({ t: 'd', nx, ny, b: button });
+    sendInput({ t: 'u', b: button });
+  }, DOUBLE_TAP_MS);
+}
+
+function sendDoubleClick(nx, ny, button) {
+  clearPendingClick();
+  sendInput({ t: 'dc', nx, ny, b: button });
+}
 
 canvas.addEventListener('pointerdown', (e) => {
   if (!connected || pinchActive) return;
@@ -658,20 +684,38 @@ canvas.addEventListener('pointerup', (e) => {
     return;
   }
 
+  const { nx, ny } = normalizedCoords(e);
+  const button = buttonName(e.button);
   const now = Date.now();
-  if (now - lastTapTime < 320) {
-    resetViewport();
+  const isDoubleTap = lastTapTime > 0
+    && (now - lastTapTime) < DOUBLE_TAP_MS
+    && lastTapPos
+    && Math.hypot(nx - lastTapPos.nx, ny - lastTapPos.ny) < 0.06;
+
+  if (isDoubleTap) {
     lastTapTime = 0;
+    lastTapPos = null;
+    if (view.zoom > 1.01) {
+      clearPendingClick();
+      resetViewport();
+    } else {
+      sendDoubleClick(nx, ny, button);
+    }
     pointerStart = null;
     return;
   }
-  lastTapTime = now;
 
-  const { nx, ny } = normalizedCoords(e);
-  sendInput({ t: 'm', nx, ny });
-  sendInput({ t: 'd', nx, ny, b: buttonName(e.button) });
-  sendInput({ t: 'u', b: buttonName(e.button) });
+  lastTapTime = now;
+  lastTapPos = { nx, ny };
+  scheduleSingleClick(nx, ny, button);
   pointerStart = null;
+});
+
+canvas.addEventListener('dblclick', (e) => {
+  if (!connected || isTouchDevice) return;
+  e.preventDefault();
+  const { nx, ny } = normalizedCoords(e);
+  sendDoubleClick(nx, ny, buttonName(e.button));
 });
 
 canvas.addEventListener('pointercancel', () => {
