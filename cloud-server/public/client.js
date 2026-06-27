@@ -382,7 +382,6 @@ function cleanupConnection() {
 function disconnect() {
   kbdToggle.checked = false;
   setMobileKeyboard(false);
-  clearPendingClick();
   cleanupConnection();
   setConnected(false);
 }
@@ -607,44 +606,30 @@ let pinchStartDist = 0;
 let pinchStartZoom = 1;
 let lastTapTime = 0;
 let lastTapPos = null;
-let pendingClickTimer = null;
-const DOUBLE_TAP_MS = 350;
+const DOUBLE_TAP_MS = 500;
 
-function clearPendingClick() {
-  if (pendingClickTimer) {
-    clearTimeout(pendingClickTimer);
-    pendingClickTimer = null;
-  }
-}
-
-function scheduleSingleClick(nx, ny, button) {
-  clearPendingClick();
-  pendingClickTimer = setTimeout(() => {
-    pendingClickTimer = null;
-    sendInput({ t: 'm', nx, ny });
-    sendInput({ t: 'd', nx, ny, b: button });
-    sendInput({ t: 'u', b: button });
-  }, DOUBLE_TAP_MS);
+function sendClick(nx, ny, button) {
+  sendInput({ t: 'm', nx, ny });
+  sendInput({ t: 'd', nx, ny, b: button });
+  sendInput({ t: 'u', b: button });
 }
 
 function sendDoubleClick(nx, ny, button) {
-  clearPendingClick();
   sendInput({ t: 'dc', nx, ny, b: button });
 }
 
 canvas.addEventListener('pointerdown', (e) => {
   if (!connected || pinchActive) return;
   e.preventDefault();
+  // 点击画面时收起手机软键盘，避免第一次点击被输入框吃掉
+  if (document.activeElement === mobileTextInput) {
+    mobileTextInput.blur();
+  }
   canvas.setPointerCapture?.(e.pointerId);
   pointerActive = true;
   pointerIntent = 'click';
   pointerStart = { x: e.clientX, y: e.clientY, panX: view.panX, panY: view.panY };
   lastMoveSent = 0;
-  if (view.zoom <= 1.01) {
-    const { nx, ny } = normalizedCoords(e);
-    sendInput({ t: 'm', nx, ny });
-    sendInput({ t: 'd', nx, ny, b: buttonName(e.button) });
-  }
 });
 
 canvas.addEventListener('pointermove', (e) => {
@@ -690,24 +675,24 @@ canvas.addEventListener('pointerup', (e) => {
   const isDoubleTap = lastTapTime > 0
     && (now - lastTapTime) < DOUBLE_TAP_MS
     && lastTapPos
-    && Math.hypot(nx - lastTapPos.nx, ny - lastTapPos.ny) < 0.06;
+    && Math.hypot(nx - lastTapPos.nx, ny - lastTapPos.ny) < 0.15;
 
   if (isDoubleTap) {
     lastTapTime = 0;
     lastTapPos = null;
     if (view.zoom > 1.01) {
-      clearPendingClick();
       resetViewport();
     } else {
-      sendDoubleClick(nx, ny, button);
+      // 第一下已单击，第二下再单击一次 = 电脑端双击
+      sendClick(nx, ny, button);
     }
     pointerStart = null;
     return;
   }
 
+  sendClick(nx, ny, button);
   lastTapTime = now;
   lastTapPos = { nx, ny };
-  scheduleSingleClick(nx, ny, button);
   pointerStart = null;
 });
 

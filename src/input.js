@@ -64,10 +64,14 @@ export async function mouseUp(button = 'left') {
 }
 
 export async function doubleClick(button = 'left', x, y) {
+  const b = buttonMap[button] ?? Button.LEFT;
   if (x != null && y != null) {
     await mouse.setPosition(new Point(Math.round(x), Math.round(y)));
   }
-  await mouse.doubleClick(buttonMap[button] ?? Button.LEFT);
+  // 两次完整 click 比 API doubleClick 在 QQ/微信等窗口上更可靠
+  await mouse.click(b);
+  await new Promise((r) => setTimeout(r, 80));
+  await mouse.click(b);
 }
 
 /**
