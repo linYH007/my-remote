@@ -187,10 +187,6 @@
         <span id="stats" class="session-stat"></span>
       </div>
       <div class="session-right">
-        <label class="toolbar-toggle">
-          <input type="checkbox" id="kbdToggle" />
-          <span>键盘</span>
-        </label>
         <button type="button" id="fullscreenBtn" class="icon-btn icon-btn--light" title="全屏">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
         </button>
@@ -208,12 +204,8 @@
       </div>
     </main>
     <div id="mobileKbdBar" class="mobile-kbd-bar" hidden>
-      <p class="mobile-kbd-hint">① 先点上方画面选中输入框 &nbsp; ② 再点「打开键盘」打字</p>
-      <div class="mobile-kbd-row">
-        <input id="mobileTextInput" class="mobile-kbd-input" type="text" enterkeyhint="send"
-          placeholder="打字内容发送到电脑…" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" />
-        <button type="button" id="mobileKbdFocusBtn" class="mobile-kbd-open">打开键盘</button>
-      </div>
+      <input id="mobileTextInput" class="mobile-kbd-input" type="text" enterkeyhint="send"
+        placeholder="输入内容发送到电脑…" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" />
       <div class="mobile-kbd-keys">
         <button type="button" class="mobile-kbd-btn" data-code="Backspace">⌫</button>
         <button type="button" class="mobile-kbd-btn" data-code="Enter">回车</button>

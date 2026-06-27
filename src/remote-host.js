@@ -6,6 +6,7 @@ import { captureFrame, getLogicalSize, refreshLogicalSize } from './capture.js';
 import * as input from './input.js';
 import { handleInputMessage } from './protocol.js';
 import { getRtcConfiguration } from './ice-config.js';
+import { hasTextCaretFocus } from './text-focus.js';
 
 const SIGNAL_URL = process.env.SIGNAL_URL;
 const PROXY_URL = process.env.PROXY_URL || '';
@@ -32,6 +33,8 @@ let transport = null; // 'webrtc' | 'relay'
 let captureTimer = null;
 let busy = false;
 let webrtcTimer = null;
+let lastTextFocus = false;
+let focusPollTimer = null;
 
 function connectSignaling() {
   const opts = {};
@@ -62,6 +65,7 @@ function connectSignaling() {
         break;
       case 'peer-joined':
         console.log('[signaling] 控制端已加入，开始建立连接…');
+        startFocusPoll();
         if (SKIP_WEBRTC) {
           await activateTransport('relay');
         } else {
@@ -85,6 +89,7 @@ function connectSignaling() {
         break;
       case 'peer-left':
         console.log('[signaling] 控制端已断开');
+        stopFocusPoll();
         stopCapture();
         cleanupWebRtc();
         transport = null;
@@ -228,9 +233,39 @@ function stopCapture() {
   }
 }
 
+async function checkAndNotifyTextFocus() {
+  const focused = await hasTextCaretFocus();
+  if (focused !== lastTextFocus) {
+    lastTextFocus = focused;
+    sendSignal({ type: 'text-focus', focused });
+    console.log('[text-focus]', focused ? '输入框已聚焦' : '输入框失焦');
+  }
+  return focused;
+}
+
+function startFocusPoll() {
+  stopFocusPoll();
+  lastTextFocus = false;
+  focusPollTimer = setInterval(() => {
+    checkAndNotifyTextFocus().catch(() => {});
+  }, 500);
+}
+
+function stopFocusPoll() {
+  if (focusPollTimer) {
+    clearInterval(focusPollTimer);
+    focusPollTimer = null;
+  }
+  lastTextFocus = false;
+}
+
 async function handleInput(msg) {
   try {
     await handleInputMessage(msg, { getLogicalSize, input });
+    if (msg.t === 'click' || msg.t === 'd' || msg.t === 'dc') {
+      setTimeout(() => checkAndNotifyTextFocus().catch(() => {}), 120);
+      setTimeout(() => checkAndNotifyTextFocus().catch(() => {}), 400);
+    }
   } catch (err) {
     console.error('[input] 注入失败:', err.message);
   }

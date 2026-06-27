@@ -685,38 +685,8 @@ html, body {
   display: none !important;
 }
 
-.mobile-kbd-hint {
-  margin: 0;
-  font-size: 12px;
-  color: #64748b;
-  line-height: 1.4;
-}
-
-.mobile-kbd-row {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
-.mobile-kbd-open {
-  flex-shrink: 0;
-  padding: 12px 14px;
-  border: none;
-  border-radius: 10px;
-  background: var(--accent);
-  color: #fff;
-  font-size: 14px;
-  font-family: inherit;
-  white-space: nowrap;
-}
-
-.mobile-kbd-open:active {
-  background: var(--accent-hover);
-}
-
 .mobile-kbd-input {
-  flex: 1;
-  min-width: 0;
+  width: 100%;
   padding: 12px 14px;
   border-radius: 10px;
   border: 1px solid rgba(255, 255, 255, 0.12);

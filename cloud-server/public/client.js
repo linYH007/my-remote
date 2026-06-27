@@ -25,10 +25,8 @@ const loginError = document.getElementById('loginError');
 const disconnectBtn = document.getElementById('disconnectBtn');
 const backHomeBtn = document.getElementById('backHomeBtn');
 const fullscreenBtn = document.getElementById('fullscreenBtn');
-const kbdToggle = document.getElementById('kbdToggle');
 const mobileKbdBar = document.getElementById('mobileKbdBar');
 const mobileTextInput = document.getElementById('mobileTextInput');
-const mobileKbdFocusBtn = document.getElementById('mobileKbdFocusBtn');
 const mobileKbdClose = document.getElementById('mobileKbdClose');
 
 const displayRoom = document.getElementById('displayRoom');
@@ -194,9 +192,12 @@ function setConnected(on) {
   connected = on;
   statusEl.textContent = on ? '已连接' : '未连接';
   statusEl.className = on ? 'pill pill--on' : 'pill pill--off';
-  if (!on) {
+  if (on && isTouchDevice) {
+    showMobileKeyboardBar(true);
+  } else if (!on) {
     transportEl.textContent = '';
     transportMode = '';
+    hideMobileKeyboardBar();
     showHome();
   }
 }
@@ -381,8 +382,7 @@ function cleanupConnection() {
 }
 
 function disconnect() {
-  kbdToggle.checked = false;
-  setMobileKeyboard(false);
+  hideMobileKeyboardBar();
   cleanupConnection();
   setConnected(false);
 }
@@ -438,6 +438,12 @@ function connectRemote(signalUrl, room, token) {
         break;
       case 'mode':
         setTransport(msg.mode === 'webrtc' ? 'webrtc' : 'relay');
+        break;
+      case 'text-focus':
+        if (isTouchDevice) {
+          if (msg.focused) openMobileKeyboard();
+          else closeMobileKeyboardSoft();
+        }
         break;
       case 'error':
         loginError.textContent = msg.message || '连接失败';
@@ -627,7 +633,7 @@ function coordsFromClient(clientX, clientY) {
   return normalizedCoords({ clientX, clientY, button: 0 });
 }
 
-function processCanvasTap(clientX, clientY) {
+function processCanvasTap(clientX, clientY, fromTouch = false) {
   if (!connected || pinchActive) return;
   const now = Date.now();
   if (now - lastProcessedTap < 80) return;
@@ -647,6 +653,7 @@ function processCanvasTap(clientX, clientY) {
       resetViewport();
     } else {
       sendClick(nx, ny, button);
+      if (fromTouch) openMobileKeyboard();
     }
     return;
   }
@@ -654,6 +661,9 @@ function processCanvasTap(clientX, clientY) {
   sendClick(nx, ny, button);
   lastTapTime = now;
   lastTapPos = { nx, ny };
+
+  // 在用户手指抬起的手势内弹出键盘（iOS 必须同步于触摸事件）
+  if (fromTouch) openMobileKeyboard();
 }
 
 canvas.addEventListener('touchstart', (e) => {
@@ -669,7 +679,7 @@ canvas.addEventListener('touchstart', (e) => {
     clearTimeout(touchTapTimer);
     touchTapTimer = setTimeout(() => {
       if (pendingTouchTap && touchMode === 'tap') {
-        processCanvasTap(pendingTouchTap.x, pendingTouchTap.y);
+        processCanvasTap(pendingTouchTap.x, pendingTouchTap.y, true);
         pendingTouchTap = null;
       }
     }, 120);
@@ -724,7 +734,7 @@ canvas.addEventListener('touchend', (e) => {
 
   e.preventDefault();
   clearTimeout(touchTapTimer);
-  processCanvasTap(t.clientX, t.clientY);
+  processCanvasTap(t.clientX, t.clientY, true);
   pendingTouchTap = null;
   touchStart = null;
 }, { passive: false });
@@ -869,34 +879,44 @@ function stepFromDelta(d) {
   return Math.sign(d) * Math.max(1, Math.round(Math.abs(d) / 100));
 }
 
-// 手机软键盘：勾选「键盘」只显示打字栏，不自动弹出系统键盘
+// 手机软键盘：连接后自动显示，点输入框时弹出，非输入区自动收起
 let mobileTextPrevLen = 0;
+let keyboardOpenedAt = 0;
 
-function setMobileKeyboard(on) {
+function showMobileKeyboardBar(show) {
   if (!isTouchDevice) return;
-  mobileKbdBar.hidden = !on;
-  if (!on) {
-    mobileTextInput.blur();
-    mobileTextInput.value = '';
-    mobileTextPrevLen = 0;
-  }
+  mobileKbdBar.hidden = !show;
 }
 
-kbdToggle.addEventListener('change', () => {
-  setMobileKeyboard(kbdToggle.checked);
-});
+function hideMobileKeyboardBar() {
+  showMobileKeyboardBar(false);
+  mobileTextInput.blur();
+  mobileTextInput.value = '';
+  mobileTextPrevLen = 0;
+}
 
-mobileKbdFocusBtn.addEventListener('click', () => {
-  mobileTextInput.focus();
-});
+function openMobileKeyboard() {
+  if (!isTouchDevice || !connected) return;
+  showMobileKeyboardBar(true);
+  keyboardOpenedAt = Date.now();
+  mobileTextInput.focus({ preventScroll: true });
+}
+
+function closeMobileKeyboardSoft() {
+  if (Date.now() - keyboardOpenedAt < 400) return;
+  mobileTextInput.blur();
+  mobileTextInput.value = '';
+  mobileTextPrevLen = 0;
+}
 
 mobileKbdClose.addEventListener('click', () => {
-  kbdToggle.checked = false;
-  setMobileKeyboard(false);
+  mobileTextInput.blur();
+  mobileTextInput.value = '';
+  mobileTextPrevLen = 0;
 });
 
 mobileTextInput.addEventListener('input', () => {
-  if (!connected || !kbdToggle.checked) return;
+  if (!connected) return;
   const val = mobileTextInput.value;
   if (val.length > mobileTextPrevLen) {
     sendInput({ t: 'type', text: val.slice(mobileTextPrevLen) });
@@ -908,7 +928,7 @@ mobileTextInput.addEventListener('input', () => {
 });
 
 mobileTextInput.addEventListener('keydown', (e) => {
-  if (!connected || !kbdToggle.checked) return;
+  if (!connected) return;
   if (e.key === 'Enter') {
     e.preventDefault();
     tapKey('Enter');
@@ -927,13 +947,13 @@ document.querySelectorAll('.mobile-kbd-btn[data-code]').forEach((btn) => {
 
 // 桌面物理键盘（非触摸设备）
 window.addEventListener('keydown', (e) => {
-  if (!connected || !kbdToggle.checked || isTouchDevice) return;
+  if (!connected || isTouchDevice) return;
   e.preventDefault();
   sendInput({ t: 'kd', code: e.code });
 });
 
 window.addEventListener('keyup', (e) => {
-  if (!connected || !kbdToggle.checked || isTouchDevice) return;
+  if (!connected || isTouchDevice) return;
   e.preventDefault();
   sendInput({ t: 'ku', code: e.code });
 });
