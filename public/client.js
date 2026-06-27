@@ -969,6 +969,19 @@ function stepFromDelta(d) {
 
 // 手机软键盘：仅通过顶部「打字」按钮手动打开
 let mobileTextPrevLen = 0;
+let mobileComposing = false;
+
+function flushMobileTextInput() {
+  if (!connected) return;
+  const val = mobileTextInput.value;
+  if (val.length > mobileTextPrevLen) {
+    sendInput({ t: 'type', text: val.slice(mobileTextPrevLen) });
+  } else if (val.length < mobileTextPrevLen) {
+    const n = mobileTextPrevLen - val.length;
+    for (let i = 0; i < n; i++) tapKey('Backspace');
+  }
+  mobileTextPrevLen = val.length;
+}
 
 function showMobileKeyboardBar(show) {
   if (!isTouchDevice) return;
@@ -998,16 +1011,18 @@ mobileKbdClose.addEventListener('click', () => {
   hideMobileKeyboardBar();
 });
 
+mobileTextInput.addEventListener('compositionstart', () => {
+  mobileComposing = true;
+});
+
+mobileTextInput.addEventListener('compositionend', () => {
+  mobileComposing = false;
+  flushMobileTextInput();
+});
+
 mobileTextInput.addEventListener('input', () => {
-  if (!connected) return;
-  const val = mobileTextInput.value;
-  if (val.length > mobileTextPrevLen) {
-    sendInput({ t: 'type', text: val.slice(mobileTextPrevLen) });
-  } else if (val.length < mobileTextPrevLen) {
-    const n = mobileTextPrevLen - val.length;
-    for (let i = 0; i < n; i++) tapKey('Backspace');
-  }
-  mobileTextPrevLen = val.length;
+  if (mobileComposing) return;
+  flushMobileTextInput();
 });
 
 mobileTextInput.addEventListener('keydown', (e) => {

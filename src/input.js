@@ -1,4 +1,4 @@
-import { mouse, keyboard, Button, Key, Point } from '@nut-tree-fork/nut-js';
+import { mouse, keyboard, Button, Key, Point, clipboard } from '@nut-tree-fork/nut-js';
 
 // 关闭动作之间的人为延迟，降低远程操作延迟。
 try {
@@ -101,7 +101,32 @@ export async function keyUp(code) {
 }
 
 /** 向被控端输入一段文本（手机软键盘等场景） */
+let typeQueue = Promise.resolve();
+
 export async function typeText(text) {
   if (!text) return;
-  await keyboard.type(text);
+  typeQueue = typeQueue.then(() => typeTextImpl(text)).catch((err) => {
+    console.error('[input] typeText failed:', err.message);
+  });
+  await typeQueue;
+}
+
+async function typeTextImpl(text) {
+  // nut-js keyboard.type 逐字符模拟按键，仅适用于 ASCII；中文/符号会乱码
+  const needsPaste = /[^\x20-\x7E\n\r\t]/.test(text);
+  if (!needsPaste) {
+    await keyboard.type(text);
+    return;
+  }
+
+  // 中文等 Unicode：写入剪贴板后 Ctrl+V 粘贴（Windows 标准做法）
+  let saved = '';
+  try { saved = await clipboard.getContent(); } catch { /* ignore */ }
+  await clipboard.setContent(text);
+  await keyboard.pressKey(Key.LeftControl, Key.V);
+  await keyboard.releaseKey(Key.LeftControl, Key.V);
+  await new Promise((r) => setTimeout(r, 40));
+  if (saved) {
+    try { await clipboard.setContent(saved); } catch { /* ignore */ }
+  }
 }
