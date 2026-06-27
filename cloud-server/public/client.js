@@ -192,9 +192,7 @@ function setConnected(on) {
   connected = on;
   statusEl.textContent = on ? '已连接' : '未连接';
   statusEl.className = on ? 'pill pill--on' : 'pill pill--off';
-  if (on && isTouchDevice) {
-    showMobileKeyboardBar(true);
-  } else if (!on) {
+  if (!on) {
     transportEl.textContent = '';
     transportMode = '';
     hideMobileKeyboardBar();
@@ -440,10 +438,7 @@ function connectRemote(signalUrl, room, token) {
         setTransport(msg.mode === 'webrtc' ? 'webrtc' : 'relay');
         break;
       case 'text-focus':
-        if (isTouchDevice) {
-          if (msg.focused) openMobileKeyboard();
-          else closeMobileKeyboardSoft();
-        }
+        if (isTouchDevice) onRemoteTextFocus(!!msg.focused);
         break;
       case 'error':
         loginError.textContent = msg.message || '连接失败';
@@ -653,7 +648,6 @@ function processCanvasTap(clientX, clientY, fromTouch = false) {
       resetViewport();
     } else {
       sendClick(nx, ny, button);
-      if (fromTouch) openMobileKeyboard();
     }
     return;
   }
@@ -661,9 +655,6 @@ function processCanvasTap(clientX, clientY, fromTouch = false) {
   sendClick(nx, ny, button);
   lastTapTime = now;
   lastTapPos = { nx, ny };
-
-  // 在用户手指抬起的手势内弹出键盘（iOS 必须同步于触摸事件）
-  if (fromTouch) openMobileKeyboard();
 }
 
 canvas.addEventListener('touchstart', (e) => {
@@ -879,9 +870,9 @@ function stepFromDelta(d) {
   return Math.sign(d) * Math.max(1, Math.round(Math.abs(d) / 100));
 }
 
-// 手机软键盘：连接后自动显示，点输入框时弹出，非输入区自动收起
+// 手机软键盘：仅在电脑端检测到输入框聚焦时显示
 let mobileTextPrevLen = 0;
-let keyboardOpenedAt = 0;
+let remoteTextFocused = false;
 
 function showMobileKeyboardBar(show) {
   if (!isTouchDevice) return;
@@ -889,30 +880,26 @@ function showMobileKeyboardBar(show) {
 }
 
 function hideMobileKeyboardBar() {
+  remoteTextFocused = false;
   showMobileKeyboardBar(false);
   mobileTextInput.blur();
   mobileTextInput.value = '';
   mobileTextPrevLen = 0;
 }
 
-function openMobileKeyboard() {
-  if (!isTouchDevice || !connected) return;
-  showMobileKeyboardBar(true);
-  keyboardOpenedAt = Date.now();
-  mobileTextInput.focus({ preventScroll: true });
-}
-
-function closeMobileKeyboardSoft() {
-  if (Date.now() - keyboardOpenedAt < 400) return;
-  mobileTextInput.blur();
-  mobileTextInput.value = '';
-  mobileTextPrevLen = 0;
+function onRemoteTextFocus(focused) {
+  remoteTextFocused = focused;
+  if (focused) {
+    showMobileKeyboardBar(true);
+    mobileTextInput.placeholder = '电脑输入框已选中，点此处打字…';
+    showToast('输入框已选中，点下方栏打字');
+  } else {
+    hideMobileKeyboardBar();
+  }
 }
 
 mobileKbdClose.addEventListener('click', () => {
-  mobileTextInput.blur();
-  mobileTextInput.value = '';
-  mobileTextPrevLen = 0;
+  hideMobileKeyboardBar();
 });
 
 mobileTextInput.addEventListener('input', () => {
