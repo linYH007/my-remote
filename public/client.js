@@ -396,6 +396,7 @@ function connectLan(token) {
 function connectRemote(signalUrl, room, token) {
   cleanupConnection();
   ws = new WebSocket(signalUrl);
+  ws.binaryType = 'arraybuffer';
 
   ws.onopen = () => {
     ws.send(JSON.stringify({ type: 'join', role: 'client', room, token }));
@@ -403,6 +404,7 @@ function connectRemote(signalUrl, room, token) {
 
   ws.onmessage = async (event) => {
     if (event.data instanceof ArrayBuffer) { onFrame(event.data); return; }
+    if (event.data instanceof Blob) { onFrame(await event.data.arrayBuffer()); return; }
     let msg;
     try { msg = JSON.parse(event.data); } catch { return; }
 
