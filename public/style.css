@@ -618,6 +618,21 @@ html, body {
   accent-color: var(--accent);
 }
 
+.btn--type {
+  padding: 6px 12px;
+  font-size: 13px;
+  border: none;
+  border-radius: 8px;
+  background: rgba(16, 185, 129, 0.15);
+  color: #6ee7b7;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.btn--type:active {
+  background: rgba(16, 185, 129, 0.3);
+}
+
 .stage {
   flex: 1;
   display: flex;

@@ -34,7 +34,6 @@ let captureTimer = null;
 let busy = false;
 let webrtcTimer = null;
 let lastTextFocus = false;
-let focusPollTimer = null;
 
 function connectSignaling() {
   const opts = {};
@@ -65,7 +64,7 @@ function connectSignaling() {
         break;
       case 'peer-joined':
         console.log('[signaling] 控制端已加入，开始建立连接…');
-        startFocusPoll();
+        lastTextFocus = false;
         if (SKIP_WEBRTC) {
           await activateTransport('relay');
         } else {
@@ -89,7 +88,7 @@ function connectSignaling() {
         break;
       case 'peer-left':
         console.log('[signaling] 控制端已断开');
-        stopFocusPoll();
+        lastTextFocus = false;
         stopCapture();
         cleanupWebRtc();
         transport = null;
@@ -243,28 +242,17 @@ async function checkAndNotifyTextFocus() {
   return focused;
 }
 
-function startFocusPoll() {
-  stopFocusPoll();
-  lastTextFocus = false;
-  focusPollTimer = setInterval(() => {
-    checkAndNotifyTextFocus().catch(() => {});
-  }, 500);
-}
-
-function stopFocusPoll() {
-  if (focusPollTimer) {
-    clearInterval(focusPollTimer);
-    focusPollTimer = null;
+function scheduleFocusCheckAfterClick() {
+  for (const delay of [180, 500]) {
+    setTimeout(() => checkAndNotifyTextFocus().catch(() => {}), delay);
   }
-  lastTextFocus = false;
 }
 
 async function handleInput(msg) {
   try {
     await handleInputMessage(msg, { getLogicalSize, input });
     if (msg.t === 'click' || msg.t === 'd' || msg.t === 'dc') {
-      setTimeout(() => checkAndNotifyTextFocus().catch(() => {}), 120);
-      setTimeout(() => checkAndNotifyTextFocus().catch(() => {}), 400);
+      scheduleFocusCheckAfterClick();
     }
   } catch (err) {
     console.error('[input] 注入失败:', err.message);

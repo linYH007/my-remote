@@ -3,12 +3,13 @@ import { promisify } from 'util';
 
 const execFileAsync = promisify(execFile);
 
-// 检测前台窗口是否处于文本输入状态（有文本光标）
+// 严格检测：仅当前台窗口存在可见文本光标时返回 true
 const PS = `
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
 public class CaretHelper {
+  const int GUI_CARETBLINKING = 0x00000001;
   [StructLayout(LayoutKind.Sequential)]
   public struct RECT { public int L; public int T; public int R; public int B; }
   [StructLayout(LayoutKind.Sequential)]
@@ -21,6 +22,13 @@ public class CaretHelper {
   [DllImport("user32.dll")] public static extern int GetWindowThreadProcessId(IntPtr hWnd, out int pid);
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll", CharSet=CharSet.Auto)] public static extern int GetClassName(IntPtr hWnd, System.Text.StringBuilder lpClassName, int nMaxCount);
+  static bool IsEditClass(string cls) {
+    if (string.IsNullOrEmpty(cls)) return false;
+    if (cls == "Edit") return true;
+    if (cls.StartsWith("RichEdit", StringComparison.OrdinalIgnoreCase)) return true;
+    if (cls.Equals("RICHEDIT", StringComparison.OrdinalIgnoreCase)) return true;
+    return false;
+  }
   public static bool HasTextCaret() {
     var gi = new GUITHREADINFO();
     gi.cbSize = Marshal.SizeOf(typeof(GUITHREADINFO));
@@ -29,13 +37,15 @@ public class CaretHelper {
     int pid;
     int tid = GetWindowThreadProcessId(hwnd, out pid);
     if (!GetGUIThreadInfo(tid, ref gi)) return false;
-    if (gi.hwndCaret != IntPtr.Zero) return true;
+    if (gi.hwndCaret != IntPtr.Zero) {
+      int w = gi.rcCaret.R - gi.rcCaret.L;
+      int h = gi.rcCaret.B - gi.rcCaret.T;
+      if (w >= 2 && h >= 2 && (gi.flags & GUI_CARETBLINKING) != 0) return true;
+    }
     if (gi.hwndFocus != IntPtr.Zero) {
       var sb = new System.Text.StringBuilder(256);
       GetClassName(gi.hwndFocus, sb, 256);
-      var cls = sb.ToString().ToUpperInvariant();
-      if (cls.Contains("EDIT") || cls.Contains("RICHEDIT") || cls.Contains("TEXTBOX") || cls.Contains("COMBOBOX"))
-        return true;
+      if (IsEditClass(sb.ToString())) return true;
     }
     return false;
   }

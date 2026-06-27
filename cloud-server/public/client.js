@@ -25,6 +25,7 @@ const loginError = document.getElementById('loginError');
 const disconnectBtn = document.getElementById('disconnectBtn');
 const backHomeBtn = document.getElementById('backHomeBtn');
 const fullscreenBtn = document.getElementById('fullscreenBtn');
+const typeBtn = document.getElementById('typeBtn');
 const mobileKbdBar = document.getElementById('mobileKbdBar');
 const mobileTextInput = document.getElementById('mobileTextInput');
 const mobileKbdClose = document.getElementById('mobileKbdClose');
@@ -628,8 +629,12 @@ function coordsFromClient(clientX, clientY) {
   return normalizedCoords({ clientX, clientY, button: 0 });
 }
 
-function processCanvasTap(clientX, clientY, fromTouch = false) {
+let lastCanvasTapAt = 0;
+const TAP_FOCUS_WINDOW_MS = 3000;
+
+function processCanvasTap(clientX, clientY) {
   if (!connected || pinchActive) return;
+  lastCanvasTapAt = Date.now();
   const now = Date.now();
   if (now - lastProcessedTap < 80) return;
   lastProcessedTap = now;
@@ -670,7 +675,7 @@ canvas.addEventListener('touchstart', (e) => {
     clearTimeout(touchTapTimer);
     touchTapTimer = setTimeout(() => {
       if (pendingTouchTap && touchMode === 'tap') {
-        processCanvasTap(pendingTouchTap.x, pendingTouchTap.y, true);
+        processCanvasTap(pendingTouchTap.x, pendingTouchTap.y);
         pendingTouchTap = null;
       }
     }, 120);
@@ -725,7 +730,7 @@ canvas.addEventListener('touchend', (e) => {
 
   e.preventDefault();
   clearTimeout(touchTapTimer);
-  processCanvasTap(t.clientX, t.clientY, true);
+  processCanvasTap(t.clientX, t.clientY);
   pendingTouchTap = null;
   touchStart = null;
 }, { passive: false });
@@ -890,13 +895,27 @@ function hideMobileKeyboardBar() {
 function onRemoteTextFocus(focused) {
   remoteTextFocused = focused;
   if (focused) {
+    // 必须是用户刚点过画面后的检测结果，避免电脑其他窗口光标误触发
+    if (Date.now() - lastCanvasTapAt > TAP_FOCUS_WINDOW_MS) return;
     showMobileKeyboardBar(true);
     mobileTextInput.placeholder = '电脑输入框已选中，点此处打字…';
-    showToast('输入框已选中，点下方栏打字');
+    showToast('点下方栏开始打字');
   } else {
     hideMobileKeyboardBar();
   }
 }
+
+function openTypingBar() {
+  showMobileKeyboardBar(true);
+  mobileTextInput.placeholder = '输入内容发送到电脑…';
+  mobileTextInput.focus();
+}
+
+if (isTouchDevice && typeBtn) typeBtn.hidden = false;
+
+typeBtn?.addEventListener('click', () => {
+  openTypingBar();
+});
 
 mobileKbdClose.addEventListener('click', () => {
   hideMobileKeyboardBar();
