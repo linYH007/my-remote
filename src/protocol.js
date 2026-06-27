@@ -25,5 +25,8 @@ export async function handleInputMessage(msg, { getLogicalSize, input }) {
     case 'ku':
       await input.keyUp(msg.code);
       break;
+    case 'type':
+      await input.typeText(String(msg.text || ''));
+      break;
   }
 }

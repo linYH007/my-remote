@@ -204,6 +204,17 @@
         <span>正在建立连接…</span>
       </div>
     </main>
+    <div id="mobileKbdBar" class="mobile-kbd-bar" hidden>
+      <input id="mobileTextInput" class="mobile-kbd-input" type="text" enterkeyhint="send"
+        placeholder="输入内容发送到电脑…" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" />
+      <div class="mobile-kbd-keys">
+        <button type="button" class="mobile-kbd-btn" data-code="Backspace">⌫</button>
+        <button type="button" class="mobile-kbd-btn" data-code="Enter">回车</button>
+        <button type="button" class="mobile-kbd-btn" data-code="Tab">Tab</button>
+        <button type="button" class="mobile-kbd-btn" data-code="Escape">Esc</button>
+        <button type="button" class="mobile-kbd-btn" id="mobileKbdClose">收起</button>
+      </div>
+    </div>
   </div>
 
   <div id="toast" class="toast" hidden></div>

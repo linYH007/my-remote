@@ -82,3 +82,9 @@ export async function keyUp(code) {
   const key = codeToKey[code];
   if (key !== undefined) await keyboard.releaseKey(key);
 }
+
+/** 向被控端输入一段文本（手机软键盘等场景） */
+export async function typeText(text) {
+  if (!text) return;
+  await keyboard.type(text);
+}

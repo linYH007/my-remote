@@ -21,6 +21,9 @@ const disconnectBtn = document.getElementById('disconnectBtn');
 const backHomeBtn = document.getElementById('backHomeBtn');
 const fullscreenBtn = document.getElementById('fullscreenBtn');
 const kbdToggle = document.getElementById('kbdToggle');
+const mobileKbdBar = document.getElementById('mobileKbdBar');
+const mobileTextInput = document.getElementById('mobileTextInput');
+const mobileKbdClose = document.getElementById('mobileKbdClose');
 
 const displayRoom = document.getElementById('displayRoom');
 const displayToken = document.getElementById('displayToken');
@@ -57,6 +60,7 @@ let passVisible = false;
 let hostPollTimer = null;
 let gotFirstFrame = false;
 let serverInfo = null;
+const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
 
 // ========== 设置持久化 ==========
 
@@ -370,6 +374,8 @@ function cleanupConnection() {
 }
 
 function disconnect() {
+  kbdToggle.checked = false;
+  setMobileKeyboard(false);
   cleanupConnection();
   setConnected(false);
 }
@@ -538,9 +544,27 @@ function normalizedCoords(e) {
 function clamp01(v) { return Math.min(1, Math.max(0, v)); }
 function buttonName(b) { return b === 1 ? 'middle' : b === 2 ? 'right' : 'left'; }
 
+function tapKey(code) {
+  sendInput({ t: 'kd', code });
+  sendInput({ t: 'ku', code });
+}
+
 let lastMoveSent = 0;
-canvas.addEventListener('mousemove', (e) => {
+let pointerActive = false;
+
+canvas.addEventListener('pointerdown', (e) => {
   if (!connected) return;
+  e.preventDefault();
+  canvas.setPointerCapture?.(e.pointerId);
+  pointerActive = true;
+  lastMoveSent = 0;
+  const { nx, ny } = normalizedCoords(e);
+  sendInput({ t: 'm', nx, ny });
+  sendInput({ t: 'd', nx, ny, b: buttonName(e.button) });
+});
+
+canvas.addEventListener('pointermove', (e) => {
+  if (!connected || !pointerActive) return;
   const now = performance.now();
   if (now - lastMoveSent < 25) return;
   lastMoveSent = now;
@@ -548,17 +572,16 @@ canvas.addEventListener('mousemove', (e) => {
   sendInput({ t: 'm', nx, ny });
 });
 
-canvas.addEventListener('mousedown', (e) => {
+canvas.addEventListener('pointerup', (e) => {
   if (!connected) return;
-  e.preventDefault();
-  const { nx, ny } = normalizedCoords(e);
-  sendInput({ t: 'd', nx, ny, b: buttonName(e.button) });
+  pointerActive = false;
+  sendInput({ t: 'u', b: buttonName(e.button) });
 });
 
-canvas.addEventListener('mouseup', (e) => {
-  if (!connected) return;
-  e.preventDefault();
-  sendInput({ t: 'u', b: buttonName(e.button) });
+canvas.addEventListener('pointercancel', () => {
+  if (!pointerActive) return;
+  pointerActive = false;
+  sendInput({ t: 'u', b: 'left' });
 });
 
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -576,14 +599,69 @@ function stepFromDelta(d) {
   return Math.sign(d) * Math.max(1, Math.round(Math.abs(d) / 100));
 }
 
-window.addEventListener('keydown', (e) => {
+// 手机软键盘：勾选「键盘」后弹出输入栏
+let mobileTextPrevLen = 0;
+
+function setMobileKeyboard(on) {
+  if (!isTouchDevice) return;
+  mobileKbdBar.hidden = !on;
+  if (on) {
+    setTimeout(() => mobileTextInput.focus(), 120);
+  } else {
+    mobileTextInput.blur();
+    mobileTextInput.value = '';
+    mobileTextPrevLen = 0;
+  }
+}
+
+kbdToggle.addEventListener('change', () => {
+  setMobileKeyboard(kbdToggle.checked);
+});
+
+mobileKbdClose.addEventListener('click', () => {
+  kbdToggle.checked = false;
+  setMobileKeyboard(false);
+});
+
+mobileTextInput.addEventListener('input', () => {
   if (!connected || !kbdToggle.checked) return;
+  const val = mobileTextInput.value;
+  if (val.length > mobileTextPrevLen) {
+    sendInput({ t: 'type', text: val.slice(mobileTextPrevLen) });
+  } else if (val.length < mobileTextPrevLen) {
+    const n = mobileTextPrevLen - val.length;
+    for (let i = 0; i < n; i++) tapKey('Backspace');
+  }
+  mobileTextPrevLen = val.length;
+});
+
+mobileTextInput.addEventListener('keydown', (e) => {
+  if (!connected || !kbdToggle.checked) return;
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    tapKey('Enter');
+    mobileTextInput.value = '';
+    mobileTextPrevLen = 0;
+  }
+});
+
+document.querySelectorAll('.mobile-kbd-btn[data-code]').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    if (!connected) return;
+    tapKey(btn.dataset.code);
+    mobileTextInput.focus();
+  });
+});
+
+// 桌面物理键盘（非触摸设备）
+window.addEventListener('keydown', (e) => {
+  if (!connected || !kbdToggle.checked || isTouchDevice) return;
   e.preventDefault();
   sendInput({ t: 'kd', code: e.code });
 });
 
 window.addEventListener('keyup', (e) => {
-  if (!connected || !kbdToggle.checked) return;
+  if (!connected || !kbdToggle.checked || isTouchDevice) return;
   e.preventDefault();
   sendInput({ t: 'ku', code: e.code });
 });
