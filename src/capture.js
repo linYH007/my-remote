@@ -33,6 +33,6 @@ export async function captureFrame({ width = 1366, quality = 55 } = {}) {
     raw: { width: rgb.width, height: rgb.height, channels: 4 },
   })
     .resize({ width, fit: 'inside', withoutEnlargement: true })
-    .jpeg({ quality })
+    .jpeg({ quality, mozjpeg: true, chromaSubsampling: '4:2:0' })
     .toBuffer();
 }

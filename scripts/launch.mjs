@@ -235,6 +235,9 @@ async function main() {
     ROOM: cfg.ROOM,
     TOKEN: cfg.TOKEN,
     PROXY_URL: proxyUrl,
+    FRAME_WIDTH: cfg.FRAME_WIDTH || (role === 'host-only' ? '1920' : '1366'),
+    FRAME_QUALITY: cfg.FRAME_QUALITY || (role === 'host-only' ? '72' : '55'),
+    FRAME_INTERVAL_MS: cfg.FRAME_INTERVAL_MS || (role === 'host-only' ? '66' : '90'),
   });
 
   savePids({

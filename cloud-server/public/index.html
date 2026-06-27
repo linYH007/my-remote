@@ -198,7 +198,10 @@
       </div>
     </header>
     <main id="stage" class="stage">
-      <canvas id="screen" class="screen"></canvas>
+      <div id="screenWrap" class="screen-wrap">
+        <canvas id="screen" class="screen"></canvas>
+      </div>
+      <div id="zoomHint" class="zoom-hint" hidden>双指缩放 · 双击还原</div>
       <div id="sessionLoading" class="session-loading">
         <div class="spinner"></div>
         <span>正在建立连接…</span>

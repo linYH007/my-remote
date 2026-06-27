@@ -12,11 +12,12 @@ const PROXY_URL = process.env.PROXY_URL || '';
 const ROOM = process.env.ROOM || crypto.randomBytes(3).toString('hex');
 const TOKEN = process.env.TOKEN || crypto.randomBytes(3).toString('hex');
 
-const FRAME_INTERVAL_MS = Number(process.env.FRAME_INTERVAL_MS) || 90;
-const FRAME_WIDTH = Number(process.env.FRAME_WIDTH) || 1366;
-const FRAME_QUALITY = Number(process.env.FRAME_QUALITY) || 55;
-const WEBRTC_TIMEOUT_MS = Number(process.env.WEBRTC_TIMEOUT_MS) || 15000;
-const MAX_BUFFERED = 2_000_000;
+const FRAME_INTERVAL_MS = Number(process.env.FRAME_INTERVAL_MS) || 66;
+const FRAME_WIDTH = Number(process.env.FRAME_WIDTH) || 1920;
+const FRAME_QUALITY = Number(process.env.FRAME_QUALITY) || 72;
+const SKIP_WEBRTC = process.env.SKIP_WEBRTC === '1' || /^wss:/i.test(SIGNAL_URL || '');
+const WEBRTC_TIMEOUT_MS = SKIP_WEBRTC ? 0 : (Number(process.env.WEBRTC_TIMEOUT_MS) || 15000);
+const MAX_BUFFERED = Number(process.env.MAX_BUFFERED) || 3_000_000;
 
 if (!SIGNAL_URL) {
   console.error('请设置环境变量 SIGNAL_URL，指向公网信令服务器 WebSocket 地址');
@@ -61,7 +62,11 @@ function connectSignaling() {
         break;
       case 'peer-joined':
         console.log('[signaling] 控制端已加入，开始建立连接…');
-        await startWebRtc();
+        if (SKIP_WEBRTC) {
+          await activateTransport('relay');
+        } else {
+          await startWebRtc();
+        }
         break;
       case 'answer':
         if (pc) await pc.setRemoteDescription(msg.sdp);
@@ -197,6 +202,8 @@ function startCapture() {
     const canSendWebRtc = transport === 'webrtc' && dc?.readyState === 'open' && dc.bufferedAmount < MAX_BUFFERED;
     const canSendRelay = transport === 'relay' && ws?.readyState === WebSocket.OPEN && ws.bufferedAmount < MAX_BUFFERED;
     if (!canSendWebRtc && !canSendRelay) return;
+    // 网络拥塞时跳帧，优先保证流畅
+    if (transport === 'relay' && ws.bufferedAmount > MAX_BUFFERED * 0.85) return;
 
     busy = true;
     try {

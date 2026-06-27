@@ -3,6 +3,11 @@ const appHome = document.getElementById('appHome');
 const appSession = document.getElementById('appSession');
 const canvas = document.getElementById('screen');
 const ctx = canvas.getContext('2d', { alpha: false });
+ctx.imageSmoothingEnabled = true;
+ctx.imageSmoothingQuality = 'high';
+const stage = document.getElementById('stage');
+const screenWrap = document.getElementById('screenWrap');
+const zoomHint = document.getElementById('zoomHint');
 const statusEl = document.getElementById('status');
 const transportEl = document.getElementById('transport');
 const statsEl = document.getElementById('stats');
@@ -180,6 +185,7 @@ function showSession(title) {
   sessionTitle.textContent = title || '远程桌面';
   sessionLoading.hidden = false;
   gotFirstFrame = false;
+  resetViewport();
   stopHostPoll();
 }
 
@@ -481,6 +487,44 @@ function handleInfoMessage(data) {
 
 // ========== 画面 ==========
 
+const view = { zoom: 1, panX: 0.5, panY: 0.5 };
+const VIEW_ZOOM_MIN = 1;
+const VIEW_ZOOM_MAX = 4;
+
+function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
+
+function getVisibleRegion() {
+  const z = view.zoom;
+  const vw = 1 / z;
+  const vh = 1 / z;
+  return {
+    x0: clamp(view.panX - vw / 2, 0, 1 - vw),
+    y0: clamp(view.panY - vh / 2, 0, 1 - vh),
+    vw,
+    vh,
+  };
+}
+
+function applyViewport() {
+  view.zoom = clamp(view.zoom, VIEW_ZOOM_MIN, VIEW_ZOOM_MAX);
+  const { vw, vh } = getVisibleRegion();
+  view.panX = clamp(view.panX, vw / 2, 1 - vw / 2);
+  view.panY = clamp(view.panY, vh / 2, 1 - vh / 2);
+  screenWrap.style.transformOrigin = `${view.panX * 100}% ${view.panY * 100}%`;
+  screenWrap.style.transform = `scale(${view.zoom})`;
+  zoomHint.hidden = view.zoom <= 1.01;
+  if (!zoomHint.hidden) {
+    zoomHint.textContent = `${view.zoom.toFixed(1)}× · 双指缩放 · 双击还原`;
+  }
+}
+
+function resetViewport() {
+  view.zoom = 1;
+  view.panX = 0.5;
+  view.panY = 0.5;
+  applyViewport();
+}
+
 let drawing = false;
 function onFrame(arrayBuffer) {
   bytesCount += arrayBuffer.byteLength;
@@ -535,9 +579,13 @@ function sendInput(obj) {
 
 function normalizedCoords(e) {
   const rect = canvas.getBoundingClientRect();
+  if (!rect.width || !rect.height) return { nx: 0.5, ny: 0.5 };
+  const ux = clamp01((e.clientX - rect.left) / rect.width);
+  const uy = clamp01((e.clientY - rect.top) / rect.height);
+  const { x0, y0, vw, vh } = getVisibleRegion();
   return {
-    nx: clamp01((e.clientX - rect.left) / rect.width),
-    ny: clamp01((e.clientY - rect.top) / rect.height),
+    nx: clamp01(x0 + ux * vw),
+    ny: clamp01(y0 + uy * vh),
   };
 }
 
@@ -551,38 +599,140 @@ function tapKey(code) {
 
 let lastMoveSent = 0;
 let pointerActive = false;
+let pointerIntent = 'click';
+let pointerStart = null;
+let pinchActive = false;
+let pinchStartDist = 0;
+let pinchStartZoom = 1;
+let lastTapTime = 0;
 
 canvas.addEventListener('pointerdown', (e) => {
-  if (!connected) return;
+  if (!connected || pinchActive) return;
   e.preventDefault();
   canvas.setPointerCapture?.(e.pointerId);
   pointerActive = true;
+  pointerIntent = 'click';
+  pointerStart = { x: e.clientX, y: e.clientY, panX: view.panX, panY: view.panY };
   lastMoveSent = 0;
-  const { nx, ny } = normalizedCoords(e);
-  sendInput({ t: 'm', nx, ny });
-  sendInput({ t: 'd', nx, ny, b: buttonName(e.button) });
+  if (view.zoom <= 1.01) {
+    const { nx, ny } = normalizedCoords(e);
+    sendInput({ t: 'm', nx, ny });
+    sendInput({ t: 'd', nx, ny, b: buttonName(e.button) });
+  }
 });
 
 canvas.addEventListener('pointermove', (e) => {
-  if (!connected || !pointerActive) return;
-  const now = performance.now();
-  if (now - lastMoveSent < 25) return;
-  lastMoveSent = now;
-  const { nx, ny } = normalizedCoords(e);
-  sendInput({ t: 'm', nx, ny });
+  if (!connected || !pointerActive || pinchActive) return;
+  if (!pointerStart) return;
+
+  const dx = e.clientX - pointerStart.x;
+  const dy = e.clientY - pointerStart.y;
+  const dist = Math.hypot(dx, dy);
+
+  if (view.zoom > 1.01 && dist > 10) {
+    pointerIntent = 'pan';
+    const rect = canvas.getBoundingClientRect();
+    const { vw, vh } = getVisibleRegion();
+    view.panX = pointerStart.panX - (dx / rect.width) * vw;
+    view.panY = pointerStart.panY - (dy / rect.height) * vh;
+    applyViewport();
+    return;
+  }
+
+  if (view.zoom <= 1.01) {
+    const now = performance.now();
+    if (now - lastMoveSent < 25) return;
+    lastMoveSent = now;
+    const { nx, ny } = normalizedCoords(e);
+    sendInput({ t: 'm', nx, ny });
+  }
 });
 
 canvas.addEventListener('pointerup', (e) => {
-  if (!connected) return;
+  if (!connected || pinchActive) return;
+  const wasPan = pointerIntent === 'pan';
   pointerActive = false;
+
+  if (wasPan) {
+    pointerStart = null;
+    return;
+  }
+
+  const now = Date.now();
+  if (now - lastTapTime < 320) {
+    resetViewport();
+    lastTapTime = 0;
+    pointerStart = null;
+    return;
+  }
+  lastTapTime = now;
+
+  const { nx, ny } = normalizedCoords(e);
+  sendInput({ t: 'm', nx, ny });
+  sendInput({ t: 'd', nx, ny, b: buttonName(e.button) });
   sendInput({ t: 'u', b: buttonName(e.button) });
+  pointerStart = null;
 });
 
 canvas.addEventListener('pointercancel', () => {
   if (!pointerActive) return;
   pointerActive = false;
-  sendInput({ t: 'u', b: 'left' });
+  pointerStart = null;
+  if (view.zoom <= 1.01) sendInput({ t: 'u', b: 'left' });
 });
+
+function pinchDistance(touches) {
+  const dx = touches[0].clientX - touches[1].clientX;
+  const dy = touches[0].clientY - touches[1].clientY;
+  return Math.hypot(dx, dy);
+}
+
+function pinchCenterNorm(touches) {
+  const cx = (touches[0].clientX + touches[1].clientX) / 2;
+  const cy = (touches[0].clientY + touches[1].clientY) / 2;
+  const rect = canvas.getBoundingClientRect();
+  if (!rect.width || !rect.height) return { nx: 0.5, ny: 0.5 };
+  const ux = (cx - rect.left) / rect.width;
+  const uy = (cy - rect.top) / rect.height;
+  const { x0, y0, vw, vh } = getVisibleRegion();
+  return { nx: clamp01(x0 + ux * vw), ny: clamp01(y0 + uy * vh) };
+}
+
+stage.addEventListener('touchstart', (e) => {
+  if (!connected || e.touches.length !== 2) return;
+  e.preventDefault();
+  pinchActive = true;
+  pointerActive = false;
+  pinchStartDist = pinchDistance(e.touches);
+  pinchStartZoom = view.zoom;
+  const c = pinchCenterNorm(e.touches);
+  view.panX = c.nx;
+  view.panY = c.ny;
+}, { passive: false });
+
+stage.addEventListener('touchmove', (e) => {
+  if (!connected || !pinchActive || e.touches.length !== 2) return;
+  e.preventDefault();
+  const dist = pinchDistance(e.touches);
+  if (pinchStartDist > 0) {
+    view.zoom = pinchStartZoom * (dist / pinchStartDist);
+    const c = pinchCenterNorm(e.touches);
+    view.panX = c.nx;
+    view.panY = c.ny;
+    applyViewport();
+  }
+}, { passive: false });
+
+function endPinch() {
+  pinchActive = false;
+  pinchStartDist = 0;
+}
+
+stage.addEventListener('touchend', (e) => {
+  if (e.touches.length < 2) endPinch();
+}, { passive: false });
+
+stage.addEventListener('touchcancel', endPinch, { passive: false });
 
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
