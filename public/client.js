@@ -53,6 +53,10 @@ const toastEl = document.getElementById('toast');
 
 const ICE_SERVERS = [{ urls: 'stun:stun.l.google.com:19302' }];
 const STORAGE_KEY = 'remote-control-settings';
+const RECONNECT_MIN_MS = 1000;
+const RECONNECT_MAX_MS = 10000;
+const VIEW_SEND_INTERVAL_MS = 90;
+const MOVE_SEND_INTERVAL_MS = 16;
 
 let ws = null;
 let pc = null;
@@ -72,6 +76,7 @@ let reconnectTimer = null;
 let pingTimer = null;
 let sessionParams = null;
 let reconnectAttempt = 0;
+let hadSuccessfulSession = false;
 
 // ========== 设置持久化 ==========
 
@@ -229,13 +234,22 @@ function startPing() {
   }, 18000);
 }
 
+function getReconnectDelay() {
+  const baseDelay = Math.min(RECONNECT_MIN_MS * 2 ** reconnectAttempt, RECONNECT_MAX_MS);
+  return Math.min(baseDelay + Math.floor(Math.random() * 500), RECONNECT_MAX_MS);
+}
+
 function scheduleReconnect() {
   clearTimeout(reconnectTimer);
   if (!sessionParams || manualDisconnect) return;
-  const delay = Math.min(2000 + reconnectAttempt * 1000, 8000);
+  const delay = getReconnectDelay();
   reconnectTimer = setTimeout(() => {
     reconnectAttempt += 1;
-    connectRemote(sessionParams.signalUrl, sessionParams.room, sessionParams.token, true);
+    if (sessionParams.kind === 'lan') {
+      connectLan(sessionParams.token, true);
+    } else {
+      connectRemote(sessionParams.signalUrl, sessionParams.room, sessionParams.token, true);
+    }
   }, delay);
 }
 
@@ -453,10 +467,36 @@ async function takeScreenshot() {
 
 screenshotBtn.addEventListener('click', () => { takeScreenshot(); });
 
+function cleanupPeerConnection() {
+  if (dc) {
+    dc.onopen = null;
+    dc.onmessage = null;
+    dc.onclose = null;
+    dc.onerror = null;
+    try { dc.close(); } catch { /* ignore */ }
+    dc = null;
+  }
+  if (pc) {
+    pc.onicecandidate = null;
+    pc.ondatachannel = null;
+    pc.onconnectionstatechange = null;
+    pc.close();
+    pc = null;
+  }
+}
+
+function requestRelayFallback() {
+  if (transportMode === 'relay') return;
+  if (ws?.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'mode', mode: 'relay' }));
+  }
+  cleanupPeerConnection();
+  setTransport('relay');
+}
+
 function cleanupConnection() {
   stopPing();
-  if (dc) { try { dc.close(); } catch { /* ignore */ } dc = null; }
-  if (pc) { pc.close(); pc = null; }
+  cleanupPeerConnection();
   if (ws) {
     ws.onclose = null;
     ws.onerror = null;
@@ -477,10 +517,11 @@ function disconnect() {
 }
 
 function connectRemote(signalUrl, room, token, isReconnect = false) {
-  sessionParams = { signalUrl, room, token };
+  sessionParams = { kind: 'remote', signalUrl, room, token };
   if (!isReconnect) {
     manualDisconnect = false;
     reconnectAttempt = 0;
+    hadSuccessfulSession = false;
   }
   cleanupConnection();
   ws = new WebSocket(signalUrl);
@@ -498,6 +539,7 @@ function connectRemote(signalUrl, room, token, isReconnect = false) {
 
     switch (msg.type) {
       case 'joined':
+        hadSuccessfulSession = true;
         reconnectAttempt = 0;
         setConnected(true);
         startPing();
@@ -508,6 +550,7 @@ function connectRemote(signalUrl, room, token, isReconnect = false) {
         showToast('被控端在线，等待画面…');
         break;
       case 'offer':
+        setConnected(true);
         await handleOffer(msg.sdp);
         break;
       case 'ice':
@@ -519,15 +562,25 @@ function connectRemote(signalUrl, room, token, isReconnect = false) {
         handleInfoMessage(JSON.stringify(msg));
         break;
       case 'mode':
+        if (msg.mode !== 'webrtc') cleanupPeerConnection();
+        setConnected(true);
         setTransport(msg.mode === 'webrtc' ? 'webrtc' : 'relay');
         break;
       case 'error':
+        if (hadSuccessfulSession && msg.message === 'invalid room or token') {
+          setReconnecting();
+          showToast('等待被控端恢复...');
+          scheduleReconnect();
+          break;
+        }
         loginError.textContent = msg.message || '连接失败';
         showToast(msg.message || '连接失败');
         manualDisconnect = true;
         disconnect();
         break;
       case 'peer-left':
+        cleanupPeerConnection();
+        setReconnecting();
         showToast('被控端暂时离线，等待恢复…');
         transportEl.textContent = '';
         transportMode = '';
@@ -537,6 +590,9 @@ function connectRemote(signalUrl, room, token, isReconnect = false) {
 
   ws.onclose = () => {
     stopPing();
+    cleanupPeerConnection();
+    transportEl.textContent = '';
+    transportMode = '';
     if (manualDisconnect) {
       setConnected(false);
       showToast('连接已断开');
@@ -551,19 +607,37 @@ function connectRemote(signalUrl, room, token, isReconnect = false) {
   };
 }
 
-function connectLan(token) {
-  manualDisconnect = false;
+function connectLan(token, isReconnect = false) {
+  sessionParams = { kind: 'lan', token };
+  if (!isReconnect) {
+    manualDisconnect = false;
+    reconnectAttempt = 0;
+    hadSuccessfulSession = false;
+  }
   cleanupConnection();
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   ws = new WebSocket(`${proto}://${location.host}/?token=${encodeURIComponent(token)}`);
   ws.binaryType = 'arraybuffer';
 
-  ws.onopen = () => { setConnected(true); setTransport('lan'); };
+  ws.onopen = () => {
+    hadSuccessfulSession = true;
+    reconnectAttempt = 0;
+    setConnected(true);
+    setTransport('lan');
+    startPing();
+  };
   ws.onmessage = (event) => {
     if (typeof event.data === 'string') { handleInfoMessage(event.data); return; }
     onFrame(event.data);
   };
   ws.onclose = (event) => {
+    stopPing();
+    if (!manualDisconnect && event.code !== 4001) {
+      setReconnecting();
+      showToast('连接断开，正在重连...');
+      scheduleReconnect();
+      return;
+    }
     manualDisconnect = true;
     setConnected(false);
     if (event.code === 4001) loginError.textContent = '密码错误';
@@ -573,27 +647,38 @@ function connectLan(token) {
 }
 
 async function handleOffer(sdp) {
-  pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
-  pc.onicecandidate = (e) => {
+  cleanupPeerConnection();
+  setConnected(true);
+  const peer = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+  pc = peer;
+  peer.onicecandidate = (e) => {
     if (ws?.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: 'ice', candidate: e.candidate ?? null }));
     }
   };
-  pc.ondatachannel = (e) => {
+  peer.ondatachannel = (e) => {
     dc = e.channel;
     dc.binaryType = 'arraybuffer';
-    dc.onopen = () => setTransport('webrtc');
+    dc.onopen = () => {
+      setConnected(true);
+      setTransport('webrtc');
+    };
     dc.onmessage = (ev) => {
       if (typeof ev.data === 'string') { handleInfoMessage(ev.data); return; }
       onFrame(ev.data);
     };
+    dc.onclose = () => requestRelayFallback();
+    dc.onerror = () => requestRelayFallback();
   };
-  pc.onconnectionstatechange = () => {
-    if (pc.connectionState === 'failed') setTransport('relay');
+  peer.onconnectionstatechange = () => {
+    if (peer.connectionState === 'failed' || peer.connectionState === 'disconnected') {
+      requestRelayFallback();
+    }
   };
-  await pc.setRemoteDescription(sdp);
-  const answer = await pc.createAnswer();
-  await pc.setLocalDescription(answer);
+  await peer.setRemoteDescription(sdp);
+  const answer = await peer.createAnswer();
+  await peer.setLocalDescription(answer);
+  if (pc !== peer || ws?.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify({ type: 'answer', sdp: { type: answer.type, sdp: answer.sdp } }));
 }
 
@@ -627,6 +712,14 @@ function getVisibleRegion() {
 // 被控端只裁剪并按原生像素发送该区域，放大后依然清晰。
 let lastViewSent = 0;
 let viewSendTimer = null;
+let viewportRaf = null;
+let renderedRegion = { x0: 0, y0: 0, vw: 1, vh: 1 };
+let gestureRect = null;
+
+function setCanvasQuality() {
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+}
 
 function sendViewNow() {
   const full = view.zoom <= 1.01;
@@ -638,25 +731,65 @@ function sendViewNow() {
 function sendViewThrottled() {
   clearTimeout(viewSendTimer);
   const since = Date.now() - lastViewSent;
-  if (since >= 110) {
+  if (since >= VIEW_SEND_INTERVAL_MS) {
     sendViewNow();
   } else {
-    viewSendTimer = setTimeout(sendViewNow, 110 - since);
+    viewSendTimer = setTimeout(sendViewNow, VIEW_SEND_INTERVAL_MS - since);
   }
 }
 
-function applyViewport() {
+function getViewportRect() {
+  const stageRect = stage.getBoundingClientRect();
+  const layoutWidth = screenWrap.offsetWidth || canvas.clientWidth;
+  const layoutHeight = screenWrap.offsetHeight || canvas.clientHeight;
+  if (layoutWidth > 0 && layoutHeight > 0) {
+    return {
+      left: stageRect.left + (stageRect.width - layoutWidth) / 2,
+      top: stageRect.top + (stageRect.height - layoutHeight) / 2,
+      width: layoutWidth,
+      height: layoutHeight,
+    };
+  }
+  return canvas.getBoundingClientRect();
+}
+
+function queueViewportPaint() {
+  if (viewportRaf) return;
+  viewportRaf = requestAnimationFrame(() => {
+    viewportRaf = null;
+    paintViewport();
+  });
+}
+
+function paintViewport() {
+  const target = getVisibleRegion();
+  const frame = renderedRegion || { x0: 0, y0: 0, vw: 1, vh: 1 };
+  const rect = getViewportRect();
+  if (view.zoom <= 1.01 || !rect.width || !rect.height) {
+    screenWrap.style.transform = 'none';
+    return;
+  }
+
+  const scaleX = frame.vw / target.vw;
+  const scaleY = frame.vh / target.vh;
+  const scale = clamp((scaleX + scaleY) / 2, 1, VIEW_ZOOM_MAX);
+  const offsetX = ((target.x0 - frame.x0) / frame.vw) * rect.width;
+  const offsetY = ((target.y0 - frame.y0) / frame.vh) * rect.height;
+  screenWrap.style.transform = `matrix(${scale}, 0, 0, ${scale}, ${-offsetX * scale}, ${-offsetY * scale})`;
+}
+
+function applyViewport({ syncRemote = true } = {}) {
   view.zoom = clamp(view.zoom, VIEW_ZOOM_MIN, VIEW_ZOOM_MAX);
   const { vw, vh } = getVisibleRegion();
   view.panX = clamp(view.panX, vw / 2, 1 - vw / 2);
   view.panY = clamp(view.panY, vh / 2, 1 - vh / 2);
   // 画面由被控端按区域采集，这里不做 CSS 缩放
-  screenWrap.style.transform = 'none';
+  queueViewportPaint();
   zoomHint.hidden = view.zoom <= 1.01;
   if (!zoomHint.hidden) {
     zoomHint.textContent = `${view.zoom.toFixed(1)}× 高清 · 双指缩放 · 双击还原`;
   }
-  sendViewThrottled();
+  if (syncRemote) sendViewThrottled();
 }
 
 function resetViewport() {
@@ -666,7 +799,25 @@ function resetViewport() {
   applyViewport();
 }
 
-let drawing = false;
+function zoomAtClientPoint(clientX, clientY, nextZoom) {
+  const rect = getViewportRect();
+  if (!rect.width || !rect.height) return;
+  const ux = clamp01((clientX - rect.left) / rect.width);
+  const uy = clamp01((clientY - rect.top) / rect.height);
+  const focus = normalizedCoords({ clientX, clientY });
+  const zoom = clamp(nextZoom, VIEW_ZOOM_MIN, VIEW_ZOOM_MAX);
+  const vw = 1 / zoom;
+  const vh = 1 / zoom;
+  view.zoom = zoom;
+  view.panX = focus.nx - ux * vw + vw / 2;
+  view.panY = focus.ny - uy * vh + vh / 2;
+  applyViewport();
+}
+
+let latestFrame = null;
+let frameDrawScheduled = false;
+let decodingFrame = false;
+
 function onFrame(arrayBuffer) {
   bytesCount += arrayBuffer.byteLength;
   frameCount += 1;
@@ -674,24 +825,44 @@ function onFrame(arrayBuffer) {
     gotFirstFrame = true;
     sessionLoading.hidden = true;
   }
-  drawFrame(arrayBuffer);
+  latestFrame = arrayBuffer;
+  scheduleFrameDraw();
+}
+
+function scheduleFrameDraw() {
+  if (frameDrawScheduled || decodingFrame) return;
+  frameDrawScheduled = true;
+  requestAnimationFrame(processLatestFrame);
+}
+
+async function processLatestFrame() {
+  frameDrawScheduled = false;
+  if (!latestFrame || decodingFrame) return;
+  const frame = latestFrame;
+  latestFrame = null;
+  decodingFrame = true;
+  try {
+    await drawFrame(frame);
+  } finally {
+    decodingFrame = false;
+    if (latestFrame) scheduleFrameDraw();
+  }
 }
 
 async function drawFrame(arrayBuffer) {
-  if (drawing) return;
-  drawing = true;
   try {
     const blob = new Blob([arrayBuffer], { type: 'image/jpeg' });
     const bitmap = await createImageBitmap(blob);
     if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) {
       canvas.width = bitmap.width;
       canvas.height = bitmap.height;
+      setCanvasQuality();
     }
     ctx.drawImage(bitmap, 0, 0);
     bitmap.close();
-  } catch { /* ignore */ } finally {
-    drawing = false;
-  }
+    renderedRegion = getVisibleRegion();
+    queueViewportPaint();
+  } catch { /* ignore */ }
 }
 
 setInterval(() => {
@@ -719,7 +890,7 @@ function sendInput(obj) {
 }
 
 function normalizedCoords(e) {
-  const rect = canvas.getBoundingClientRect();
+  const rect = gestureRect || getViewportRect();
   if (!rect.width || !rect.height) return { nx: 0.5, ny: 0.5 };
   const ux = clamp01((e.clientX - rect.left) / rect.width);
   const uy = clamp01((e.clientY - rect.top) / rect.height);
@@ -799,6 +970,7 @@ function processCanvasTap(clientX, clientY) {
 canvas.addEventListener('touchstart', (e) => {
   if (!connected || pinchActive || e.touches.length !== 1) return;
   const t = e.touches[0];
+  gestureRect = getViewportRect();
   touchStart = { x: t.clientX, y: t.clientY, panX: view.panX, panY: view.panY };
   touchMode = 'tap';
   pendingTouchTap = { x: t.clientX, y: t.clientY };
@@ -829,7 +1001,7 @@ canvas.addEventListener('touchmove', (e) => {
 
   if (view.zoom > 1.01) {
     e.preventDefault();
-    const rect = canvas.getBoundingClientRect();
+    const rect = gestureRect || getViewportRect();
     const { vw, vh } = getVisibleRegion();
     view.panX = touchStart.panX - (dx / rect.width) * vw;
     view.panY = touchStart.panY - (dy / rect.height) * vh;
@@ -844,6 +1016,8 @@ canvas.addEventListener('touchend', (e) => {
     touchStart = null;
     touchMode = 'tap';
     pendingTouchTap = null;
+    gestureRect = null;
+    sendViewNow();
     return;
   }
 
@@ -858,6 +1032,7 @@ canvas.addEventListener('touchend', (e) => {
   if (Math.hypot(dx, dy) > 25) {
     pendingTouchTap = null;
     touchStart = null;
+    gestureRect = null;
     clearTimeout(touchTapTimer);
     return;
   }
@@ -867,11 +1042,13 @@ canvas.addEventListener('touchend', (e) => {
   processCanvasTap(t.clientX, t.clientY);
   pendingTouchTap = null;
   touchStart = null;
+  gestureRect = null;
 }, { passive: false });
 
 canvas.addEventListener('touchcancel', () => {
   pendingTouchTap = null;
   touchStart = null;
+  gestureRect = null;
   touchMode = 'tap';
   clearTimeout(touchTapTimer);
 }, { passive: true });
@@ -882,6 +1059,7 @@ canvas.addEventListener('pointerdown', (e) => {
   canvas.setPointerCapture?.(e.pointerId);
   pointerActive = true;
   pointerIntent = 'click';
+  gestureRect = getViewportRect();
   pointerStart = { x: e.clientX, y: e.clientY, panX: view.panX, panY: view.panY };
   lastMoveSent = 0;
 });
@@ -896,7 +1074,7 @@ canvas.addEventListener('pointermove', (e) => {
 
   if (view.zoom > 1.01 && dist > 10) {
     pointerIntent = 'pan';
-    const rect = canvas.getBoundingClientRect();
+    const rect = gestureRect || getViewportRect();
     const { vw, vh } = getVisibleRegion();
     view.panX = pointerStart.panX - (dx / rect.width) * vw;
     view.panY = pointerStart.panY - (dy / rect.height) * vh;
@@ -906,7 +1084,7 @@ canvas.addEventListener('pointermove', (e) => {
 
   if (view.zoom <= 1.01) {
     const now = performance.now();
-    if (now - lastMoveSent < 25) return;
+    if (now - lastMoveSent < MOVE_SEND_INTERVAL_MS) return;
     lastMoveSent = now;
     const { nx, ny } = normalizedCoords(e);
     sendInput({ t: 'm', nx, ny });
@@ -920,11 +1098,14 @@ canvas.addEventListener('pointerup', (e) => {
 
   if (wasPan) {
     pointerStart = null;
+    gestureRect = null;
+    sendViewNow();
     return;
   }
 
   processCanvasTap(e.clientX, e.clientY);
   pointerStart = null;
+  gestureRect = null;
 });
 
 canvas.addEventListener('dblclick', (e) => {
@@ -938,6 +1119,7 @@ canvas.addEventListener('pointercancel', () => {
   if (!pointerActive) return;
   pointerActive = false;
   pointerStart = null;
+  gestureRect = null;
   if (view.zoom <= 1.01) sendInput({ t: 'u', b: 'left' });
 });
 
@@ -950,7 +1132,7 @@ function pinchDistance(touches) {
 function pinchCenterNorm(touches) {
   const cx = (touches[0].clientX + touches[1].clientX) / 2;
   const cy = (touches[0].clientY + touches[1].clientY) / 2;
-  const rect = canvas.getBoundingClientRect();
+  const rect = gestureRect || getViewportRect();
   if (!rect.width || !rect.height) return { nx: 0.5, ny: 0.5 };
   const ux = (cx - rect.left) / rect.width;
   const uy = (cy - rect.top) / rect.height;
@@ -963,6 +1145,7 @@ stage.addEventListener('touchstart', (e) => {
   e.preventDefault();
   pinchActive = true;
   pointerActive = false;
+  gestureRect = getViewportRect();
   pinchStartDist = pinchDistance(e.touches);
   pinchStartZoom = view.zoom;
   const c = pinchCenterNorm(e.touches);
@@ -984,6 +1167,8 @@ stage.addEventListener('touchmove', (e) => {
 function endPinch() {
   pinchActive = false;
   pinchStartDist = 0;
+  gestureRect = null;
+  sendViewNow();
 }
 
 stage.addEventListener('touchend', (e) => {
@@ -997,6 +1182,11 @@ canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 canvas.addEventListener('wheel', (e) => {
   if (!connected) return;
   e.preventDefault();
+  if (e.ctrlKey) {
+    const factor = Math.exp(-e.deltaY * 0.0025);
+    zoomAtClientPoint(e.clientX, e.clientY, view.zoom * factor);
+    return;
+  }
   const dy = stepFromDelta(e.deltaY);
   const dx = stepFromDelta(e.deltaX);
   if (dx || dy) sendInput({ t: 'w', dx, dy });

@@ -84,7 +84,7 @@ function getRoom(roomId) {
 }
 
 function sendJson(ws, obj) {
-  if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(obj));
+  if (ws && ws.readyState === ws.OPEN) ws.send(JSON.stringify(obj));
 }
 
 function peerOf(room, role) {
@@ -92,19 +92,22 @@ function peerOf(room, role) {
 }
 
 function forwardJson(room, fromRole, msg) {
+  if (!room) return;
   const target = peerOf(room, fromRole);
   if (target && target.readyState === target.OPEN) sendJson(target, msg);
 }
 
-function cleanupRole(roomId, role) {
+function cleanupRole(roomId, role, closingWs) {
   const room = rooms.get(roomId);
   if (!room) return;
+  if (role === 'host' && room.host !== closingWs) return;
+  if (role === 'client' && room.client !== closingWs) return;
   const other = role === 'host' ? room.client : room.host;
   if (other) sendJson(other, { type: 'peer-left', role });
   if (role === 'host') {
     room.host = null;
-    room.token = null;
     room.hostSince = null;
+    if (!room.client) room.token = null;
   } else {
     room.client = null;
   }
@@ -171,7 +174,7 @@ wss.on('connection', (ws) => {
           sendJson(ws, { type: 'joined', role: 'host', room: roomId });
           if (room.client) sendJson(ws, { type: 'peer-present', role: 'client' });
         } else {
-          if (!room.host || room.token !== token) {
+          if (room.token !== token) {
             sendJson(ws, { type: 'error', message: 'invalid room or token' });
             ws.close();
             return;
@@ -209,17 +212,18 @@ wss.on('connection', (ws) => {
   });
 
   ws.on('close', () => {
-    if (ws.roomId && ws.role) cleanupRole(ws.roomId, ws.role);
+    if (ws.roomId && ws.role) cleanupRole(ws.roomId, ws.role, ws);
   });
 });
 
+const HEARTBEAT_INTERVAL_MS = Number(process.env.HEARTBEAT_INTERVAL_MS) || 25000;
 const heartbeat = setInterval(() => {
   for (const ws of wss.clients) {
     if (ws.isAlive === false) { ws.terminate(); continue; }
     ws.isAlive = false;
     try { ws.ping(); } catch { /* ignore */ }
   }
-}, 55000);
+}, HEARTBEAT_INTERVAL_MS);
 wss.on('close', () => clearInterval(heartbeat));
 
 server.listen(PORT, () => {

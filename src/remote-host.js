@@ -18,6 +18,9 @@ const FRAME_QUALITY = Number(process.env.FRAME_QUALITY) || 72;
 const SKIP_WEBRTC = process.env.SKIP_WEBRTC === '1' || /^wss:/i.test(SIGNAL_URL || '');
 const WEBRTC_TIMEOUT_MS = SKIP_WEBRTC ? 0 : (Number(process.env.WEBRTC_TIMEOUT_MS) || 15000);
 const MAX_BUFFERED = Number(process.env.MAX_BUFFERED) || 3_000_000;
+const SIGNAL_RECONNECT_MIN_MS = Number(process.env.SIGNAL_RECONNECT_MIN_MS) || 1000;
+const SIGNAL_RECONNECT_MAX_MS = Number(process.env.SIGNAL_RECONNECT_MAX_MS) || 15000;
+const WEBRTC_DISCONNECTED_GRACE_MS = Number(process.env.WEBRTC_DISCONNECTED_GRACE_MS) || 3000;
 
 if (!SIGNAL_URL) {
   console.error('请设置环境变量 SIGNAL_URL，指向公网信令服务器 WebSocket 地址');
@@ -33,7 +36,10 @@ let captureTimer = null;
 let busy = false;
 let currentRegion = null; // 控制端放大时的可视区域，用于裁剪发送
 let webrtcTimer = null;
+let webrtcDisconnectedTimer = null;
 let signalPingTimer = null;
+let signalReconnectTimer = null;
+let signalReconnectAttempt = 0;
 
 function startSignalPing() {
   if (signalPingTimer) clearInterval(signalPingTimer);
@@ -51,6 +57,54 @@ function stopSignalPing() {
   }
 }
 
+function clearSignalReconnect() {
+  if (signalReconnectTimer) {
+    clearTimeout(signalReconnectTimer);
+    signalReconnectTimer = null;
+  }
+}
+
+function scheduleSignalReconnect() {
+  clearSignalReconnect();
+  const baseDelay = Math.min(
+    SIGNAL_RECONNECT_MIN_MS * 2 ** signalReconnectAttempt,
+    SIGNAL_RECONNECT_MAX_MS,
+  );
+  const delay = Math.min(baseDelay + Math.floor(Math.random() * 500), SIGNAL_RECONNECT_MAX_MS);
+  signalReconnectTimer = setTimeout(() => {
+    signalReconnectTimer = null;
+    signalReconnectAttempt += 1;
+    connectSignaling();
+  }, delay);
+  return delay;
+}
+
+function clearWebRtcFallback() {
+  if (webrtcDisconnectedTimer) {
+    clearTimeout(webrtcDisconnectedTimer);
+    webrtcDisconnectedTimer = null;
+  }
+}
+
+function scheduleWebRtcFallback(reason) {
+  if (transport !== 'webrtc' || webrtcDisconnectedTimer) return;
+  webrtcDisconnectedTimer = setTimeout(() => {
+    webrtcDisconnectedTimer = null;
+    if (transport === 'webrtc') {
+      console.warn(`[webrtc] ${reason}，切换到中继模式`);
+      activateTransport('relay');
+    }
+  }, WEBRTC_DISCONNECTED_GRACE_MS);
+}
+
+async function startPeerTransport() {
+  if (SKIP_WEBRTC) {
+    await activateTransport('relay');
+  } else {
+    await startWebRtc();
+  }
+}
+
 function connectSignaling() {
   const opts = {};
   // 跨网络(wss) + 本机有代理时，经代理出站连云端，绕过对境外的直连限制（无需 TUN）
@@ -58,14 +112,19 @@ function connectSignaling() {
     opts.agent = new HttpsProxyAgent(PROXY_URL);
   }
   ws = new WebSocket(SIGNAL_URL, opts);
+  const socket = ws;
 
   ws.on('open', () => {
+    if (ws !== socket) return;
+    signalReconnectAttempt = 0;
+    clearSignalReconnect();
     console.log('[signaling] 已连接:', SIGNAL_URL, PROXY_URL ? `(经代理 ${PROXY_URL})` : '');
     startSignalPing();
     ws.send(JSON.stringify({ type: 'join', role: 'host', room: ROOM, token: TOKEN }));
   });
 
   ws.on('message', async (raw, isBinary) => {
+    if (ws !== socket) return;
     if (isBinary) return;
 
     let msg;
@@ -81,13 +140,10 @@ function connectSignaling() {
         break;
       case 'pong':
         break;
+      case 'peer-present':
       case 'peer-joined':
         console.log('[signaling] 控制端已加入，开始建立连接…');
-        if (SKIP_WEBRTC) {
-          await activateTransport('relay');
-        } else {
-          await startWebRtc();
-        }
+        await startPeerTransport();
         break;
       case 'answer':
         if (pc) await pc.setRemoteDescription(msg.sdp);
@@ -104,6 +160,9 @@ function connectSignaling() {
       case 'relay':
         if (msg.msg) await handleInput(msg.msg);
         break;
+      case 'mode':
+        if (msg.mode === 'relay') await activateTransport('relay');
+        break;
       case 'peer-left':
         console.log('[signaling] 控制端已断开');
         stopCapture();
@@ -116,14 +175,19 @@ function connectSignaling() {
   });
 
   ws.on('close', () => {
-    console.log('[signaling] 连接断开，2 秒后重连…');
+    if (ws !== socket) return;
+    console.log('[signaling] 连接断开，准备重连…');
     stopSignalPing();
     stopCapture();
     cleanupWebRtc();
-    setTimeout(connectSignaling, 2000);
+    transport = null;
+    ws = null;
+    const delay = scheduleSignalReconnect();
+    console.log(`[signaling] ${Math.round(delay / 1000)} 秒后重连`);
   });
 
   ws.on('error', (err) => {
+    if (ws !== socket) return;
     console.error('[signaling] 错误:', err.message);
   });
 }
@@ -150,6 +214,8 @@ async function startWebRtc() {
       }
     }
   };
+  dc.onclose = () => scheduleWebRtcFallback('data channel closed');
+  dc.onerror = () => scheduleWebRtcFallback('data channel error');
 
   pc.onIceCandidate.subscribe((candidate) => {
     sendSignal({ type: 'ice', candidate: candidate ?? null });
@@ -157,11 +223,15 @@ async function startWebRtc() {
 
   pc.connectionStateChange.subscribe((state) => {
     if (state === 'connected' && dc?.readyState === 'open') {
+      clearWebRtcFallback();
       activateTransport('webrtc');
     }
     if (state === 'failed') {
       console.warn('[webrtc] 连接失败，切换到中继模式');
       activateTransport('relay');
+    }
+    if (state === 'disconnected' || state === 'closed') {
+      scheduleWebRtcFallback(state);
     }
   });
 
@@ -178,11 +248,16 @@ async function startWebRtc() {
 }
 
 function cleanupWebRtc() {
+  clearWebRtcFallback();
   if (webrtcTimer) {
     clearTimeout(webrtcTimer);
     webrtcTimer = null;
   }
   if (dc) {
+    dc.onopen = null;
+    dc.onmessage = null;
+    dc.onclose = null;
+    dc.onerror = null;
     try {
       dc.close();
     } catch {
@@ -203,6 +278,11 @@ function sendSignal(obj) {
 async function activateTransport(mode) {
   if (transport === mode) return;
   transport = mode;
+  if (mode === 'relay') {
+    cleanupWebRtc();
+  } else {
+    clearWebRtcFallback();
+  }
   console.log(`[transport] 使用 ${mode === 'webrtc' ? 'WebRTC P2P' : '信令中继'} 传输`);
   sendSignal({ type: 'mode', mode });
 
