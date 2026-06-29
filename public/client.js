@@ -56,7 +56,8 @@ const STORAGE_KEY = 'remote-control-settings';
 const RECONNECT_MIN_MS = 1000;
 const RECONNECT_MAX_MS = 10000;
 const VIEW_SEND_INTERVAL_MS = 90;
-const MOVE_SEND_INTERVAL_MS = 16;
+const MOVE_SEND_INTERVAL_MS = 12;
+const INPUT_BUFFER_LIMIT = 256_000;
 
 let ws = null;
 let pc = null;
@@ -874,19 +875,73 @@ setInterval(() => {
 
 // ========== 输入 ==========
 
-function sendInput(obj) {
+let pendingMoveInput = null;
+let moveInputRaf = null;
+let lastMoveInputSent = 0;
+
+function transportBufferedAmount() {
+  if (transportMode === 'lan') return ws?.bufferedAmount ?? 0;
+  if (transportMode === 'webrtc') return dc?.bufferedAmount ?? 0;
+  return ws?.bufferedAmount ?? 0;
+}
+
+function sendInputNow(obj, { urgent = false } = {}) {
   if (!connected) return;
+  if (!urgent && transportBufferedAmount() > INPUT_BUFFER_LIMIT) return;
   if (transportMode === 'lan' && ws?.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify(obj));
-    return;
+    return true;
   }
   if (transportMode === 'webrtc' && dc?.readyState === 'open') {
     dc.send(JSON.stringify(obj));
-    return;
+    return true;
   }
   if (ws?.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: 'relay', msg: obj }));
+    return true;
   }
+  return false;
+}
+
+function scheduleMoveInput() {
+  if (moveInputRaf) return;
+  moveInputRaf = requestAnimationFrame(flushMoveInput);
+}
+
+function flushMoveInput(now = performance.now()) {
+  moveInputRaf = null;
+  if (!pendingMoveInput) return;
+  if (now - lastMoveInputSent < MOVE_SEND_INTERVAL_MS) {
+    scheduleMoveInput();
+    return;
+  }
+  const move = pendingMoveInput;
+  pendingMoveInput = null;
+  if (sendInputNow(move)) lastMoveInputSent = now;
+  if (pendingMoveInput) scheduleMoveInput();
+}
+
+function flushPendingMoveInput() {
+  if (!pendingMoveInput) return;
+  const move = pendingMoveInput;
+  pendingMoveInput = null;
+  if (moveInputRaf) {
+    cancelAnimationFrame(moveInputRaf);
+    moveInputRaf = null;
+  }
+  if (sendInputNow(move, { urgent: true })) lastMoveInputSent = performance.now();
+}
+
+function sendInput(obj) {
+  if (obj?.t === 'm') {
+    pendingMoveInput = obj;
+    scheduleMoveInput();
+    return;
+  }
+  if (obj?.t === 'click' || obj?.t === 'dc' || obj?.t === 'd' || obj?.t === 'u' || obj?.t === 'kd' || obj?.t === 'ku') {
+    flushPendingMoveInput();
+  }
+  sendInputNow(obj, { urgent: obj?.t !== 'view' && obj?.t !== 'w' });
 }
 
 function normalizedCoords(e) {
@@ -909,7 +964,6 @@ function tapKey(code) {
   sendInput({ t: 'ku', code });
 }
 
-let lastMoveSent = 0;
 let pointerActive = false;
 let pointerIntent = 'click';
 let pointerStart = null;
@@ -933,9 +987,43 @@ let pendingTouchTap = null;
 let touchTapTimer = null;
 let touchStart = null;
 let touchMode = 'tap';
+let touchMoveRaf = null;
+let pendingTouchMove = null;
 
 function coordsFromClient(clientX, clientY) {
   return normalizedCoords({ clientX, clientY, button: 0 });
+}
+
+function sendCursorMove(clientX, clientY, { immediate = false } = {}) {
+  const { nx, ny } = coordsFromClient(clientX, clientY);
+  const move = { t: 'm', nx, ny };
+  if (immediate) {
+    pendingMoveInput = null;
+    sendInputNow(move, { urgent: true });
+    lastMoveInputSent = performance.now();
+  } else {
+    sendInput(move);
+  }
+}
+
+function queueTouchCursorMove(clientX, clientY) {
+  pendingTouchMove = { clientX, clientY };
+  if (touchMoveRaf) return;
+  touchMoveRaf = requestAnimationFrame(() => {
+    touchMoveRaf = null;
+    if (!pendingTouchMove) return;
+    const next = pendingTouchMove;
+    pendingTouchMove = null;
+    sendCursorMove(next.clientX, next.clientY);
+  });
+}
+
+function clearTouchMoveQueue() {
+  pendingTouchMove = null;
+  if (touchMoveRaf) {
+    cancelAnimationFrame(touchMoveRaf);
+    touchMoveRaf = null;
+  }
 }
 
 function processCanvasTap(clientX, clientY) {
@@ -974,6 +1062,7 @@ canvas.addEventListener('touchstart', (e) => {
   touchStart = { x: t.clientX, y: t.clientY, panX: view.panX, panY: view.panY };
   touchMode = 'tap';
   pendingTouchTap = { x: t.clientX, y: t.clientY };
+  if (view.zoom <= 1.01) sendCursorMove(t.clientX, t.clientY, { immediate: true });
 
   if (document.activeElement === mobileTextInput) {
     e.preventDefault();
@@ -1006,6 +1095,9 @@ canvas.addEventListener('touchmove', (e) => {
     view.panX = touchStart.panX - (dx / rect.width) * vw;
     view.panY = touchStart.panY - (dy / rect.height) * vh;
     applyViewport();
+  } else {
+    e.preventDefault();
+    queueTouchCursorMove(t.clientX, t.clientY);
   }
 }, { passive: false });
 
@@ -1017,6 +1109,7 @@ canvas.addEventListener('touchend', (e) => {
     touchMode = 'tap';
     pendingTouchTap = null;
     gestureRect = null;
+    clearTouchMoveQueue();
     sendViewNow();
     return;
   }
@@ -1033,6 +1126,7 @@ canvas.addEventListener('touchend', (e) => {
     pendingTouchTap = null;
     touchStart = null;
     gestureRect = null;
+    clearTouchMoveQueue();
     clearTimeout(touchTapTimer);
     return;
   }
@@ -1043,6 +1137,7 @@ canvas.addEventListener('touchend', (e) => {
   pendingTouchTap = null;
   touchStart = null;
   gestureRect = null;
+  clearTouchMoveQueue();
 }, { passive: false });
 
 canvas.addEventListener('touchcancel', () => {
@@ -1050,6 +1145,7 @@ canvas.addEventListener('touchcancel', () => {
   touchStart = null;
   gestureRect = null;
   touchMode = 'tap';
+  clearTouchMoveQueue();
   clearTimeout(touchTapTimer);
 }, { passive: true });
 
@@ -1061,7 +1157,7 @@ canvas.addEventListener('pointerdown', (e) => {
   pointerIntent = 'click';
   gestureRect = getViewportRect();
   pointerStart = { x: e.clientX, y: e.clientY, panX: view.panX, panY: view.panY };
-  lastMoveSent = 0;
+  if (view.zoom <= 1.01) sendCursorMove(e.clientX, e.clientY, { immediate: true });
 });
 
 canvas.addEventListener('pointermove', (e) => {
@@ -1083,11 +1179,9 @@ canvas.addEventListener('pointermove', (e) => {
   }
 
   if (view.zoom <= 1.01) {
-    const now = performance.now();
-    if (now - lastMoveSent < MOVE_SEND_INTERVAL_MS) return;
-    lastMoveSent = now;
-    const { nx, ny } = normalizedCoords(e);
-    sendInput({ t: 'm', nx, ny });
+    const events = typeof e.getCoalescedEvents === 'function' ? e.getCoalescedEvents() : null;
+    const latest = events?.length ? events[events.length - 1] : e;
+    sendCursorMove(latest.clientX, latest.clientY);
   }
 });
 
