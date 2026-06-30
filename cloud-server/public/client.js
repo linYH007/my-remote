@@ -693,7 +693,11 @@ function handleInfoMessage(data) {
 
 const view = { zoom: 1, panX: 0.5, panY: 0.5 };
 const VIEW_ZOOM_MIN = 1;
-const VIEW_ZOOM_MAX = 4;
+const VIEW_ZOOM_MAX = 6;
+const WHEEL_ZOOM_SPEED = 0.006;
+const PINCH_ZOOM_SPEED = 1.45;
+const PAN_SPEED = 2.2;
+const PAN_START_PX = 5;
 
 function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
 
@@ -1082,7 +1086,7 @@ canvas.addEventListener('touchmove', (e) => {
   const t = e.touches[0];
   const dx = t.clientX - touchStart.x;
   const dy = t.clientY - touchStart.y;
-  if (Math.hypot(dx, dy) <= 10) return;
+  if (Math.hypot(dx, dy) <= PAN_START_PX) return;
 
   touchMode = 'pan';
   pendingTouchTap = null;
@@ -1092,8 +1096,8 @@ canvas.addEventListener('touchmove', (e) => {
     e.preventDefault();
     const rect = gestureRect || getViewportRect();
     const { vw, vh } = getVisibleRegion();
-    view.panX = touchStart.panX - (dx / rect.width) * vw;
-    view.panY = touchStart.panY - (dy / rect.height) * vh;
+    view.panX = touchStart.panX - (dx / rect.width) * vw * PAN_SPEED;
+    view.panY = touchStart.panY - (dy / rect.height) * vh * PAN_SPEED;
     applyViewport();
   } else {
     e.preventDefault();
@@ -1168,12 +1172,12 @@ canvas.addEventListener('pointermove', (e) => {
   const dy = e.clientY - pointerStart.y;
   const dist = Math.hypot(dx, dy);
 
-  if (view.zoom > 1.01 && dist > 10) {
+  if (view.zoom > 1.01 && dist > PAN_START_PX) {
     pointerIntent = 'pan';
     const rect = gestureRect || getViewportRect();
     const { vw, vh } = getVisibleRegion();
-    view.panX = pointerStart.panX - (dx / rect.width) * vw;
-    view.panY = pointerStart.panY - (dy / rect.height) * vh;
+    view.panX = pointerStart.panX - (dx / rect.width) * vw * PAN_SPEED;
+    view.panY = pointerStart.panY - (dy / rect.height) * vh * PAN_SPEED;
     applyViewport();
     return;
   }
@@ -1252,7 +1256,8 @@ stage.addEventListener('touchmove', (e) => {
   e.preventDefault();
   const dist = pinchDistance(e.touches);
   if (pinchStartDist > 0) {
-    view.zoom = pinchStartZoom * (dist / pinchStartDist);
+    const ratio = Math.max(0.1, dist / pinchStartDist);
+    view.zoom = pinchStartZoom * Math.pow(ratio, PINCH_ZOOM_SPEED);
     // 中心在捏合开始时已锁定，缩放过程中不再变更，避免区域采集延迟导致抖动
     applyViewport();
   }
@@ -1277,7 +1282,7 @@ canvas.addEventListener('wheel', (e) => {
   if (!connected) return;
   e.preventDefault();
   if (e.ctrlKey) {
-    const factor = Math.exp(-e.deltaY * 0.0025);
+    const factor = Math.exp(-e.deltaY * WHEEL_ZOOM_SPEED);
     zoomAtClientPoint(e.clientX, e.clientY, view.zoom * factor);
     return;
   }
