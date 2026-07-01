@@ -6,6 +6,7 @@ import { WebSocketServer } from 'ws';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 8080;
+const MAX_RELAY_BUFFERED = Number(process.env.MAX_RELAY_BUFFERED) || 3_000_000;
 
 const app = express();
 // 禁止缓存 HTML/JS/CSS，确保手机端每次都拿到最新界面（解决「更新后手机仍是旧页面」问题）
@@ -99,7 +100,9 @@ wss.on('connection', (ws) => {
       const room = rooms.get(ws.roomId);
       if (!room) return;
       const target = peerOf(room, ws.role);
-      if (target && target.readyState === target.OPEN) target.send(raw, { binary: true });
+      if (target && target.readyState === target.OPEN && target.bufferedAmount < MAX_RELAY_BUFFERED) {
+        target.send(raw, { binary: true });
+      }
       return;
     }
 

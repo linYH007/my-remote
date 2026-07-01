@@ -8,6 +8,7 @@ import { WebSocketServer } from 'ws';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 8080;
+const MAX_RELAY_BUFFERED = Number(process.env.MAX_RELAY_BUFFERED) || 3_000_000;
 const PUBLIC_URL_FILE = path.join(__dirname, '..', 'logs', 'public-url.json');
 const CLIENT_INFO_FILE = path.join(__dirname, '..', 'logs', 'client-info.json');
 
@@ -141,7 +142,9 @@ wss.on('connection', (ws) => {
       const room = rooms.get(ws.roomId);
       if (!room) return;
       const target = peerOf(room, ws.role);
-      if (target && target.readyState === target.OPEN) target.send(raw, { binary: true });
+      if (target && target.readyState === target.OPEN && target.bufferedAmount < MAX_RELAY_BUFFERED) {
+        target.send(raw, { binary: true });
+      }
       return;
     }
 

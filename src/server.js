@@ -56,11 +56,12 @@ wss.on('connection', async (ws, req) => {
   ws.send(JSON.stringify({ type: 'info', size: getLogicalSize() }));
 
   let busy = false;
+  let currentRegion = null;
   const timer = setInterval(async () => {
     if (busy || ws.readyState !== ws.OPEN || ws.bufferedAmount > MAX_BUFFERED) return;
     busy = true;
     try {
-      const frame = await captureFrame({ width: FRAME_WIDTH, quality: FRAME_QUALITY });
+      const frame = await captureFrame({ width: FRAME_WIDTH, quality: FRAME_QUALITY, region: currentRegion });
       ws.send(frame);
     } catch (err) {
       console.error('[capture] 采集失败:', err.message);
@@ -74,6 +75,10 @@ wss.on('connection', async (ws, req) => {
     try {
       msg = JSON.parse(raw.toString());
     } catch {
+      return;
+    }
+    if (msg && msg.t === 'view') {
+      currentRegion = msg.full ? null : { x0: msg.x0, y0: msg.y0, vw: msg.vw, vh: msg.vh };
       return;
     }
     try {

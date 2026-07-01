@@ -142,6 +142,7 @@ function connectSignaling() {
         break;
       case 'peer-present':
       case 'peer-joined':
+        currentRegion = null;
         console.log('[signaling] 控制端已加入，开始建立连接…');
         await startPeerTransport();
         break;
@@ -165,6 +166,7 @@ function connectSignaling() {
         break;
       case 'peer-left':
         console.log('[signaling] 控制端已断开');
+        currentRegion = null;
         stopCapture();
         cleanupWebRtc();
         transport = null;
@@ -180,6 +182,7 @@ function connectSignaling() {
     stopSignalPing();
     stopCapture();
     cleanupWebRtc();
+    currentRegion = null;
     transport = null;
     ws = null;
     const delay = scheduleSignalReconnect();

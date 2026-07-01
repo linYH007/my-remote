@@ -6,6 +6,15 @@ import sharp from 'sharp';
 // 两者在开启了显示缩放（如 125%/150%）时并不相等，因此坐标映射必须基于逻辑尺寸。
 let logicalSize = { width: 0, height: 0 };
 
+function finiteNumber(value, fallback) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function clampNumber(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
 export function getLogicalSize() {
   return logicalSize;
 }
@@ -38,16 +47,16 @@ export async function captureFrame({ width = 1366, quality = 55, region = null }
   let subsampling = '4:2:0';
 
   if (region) {
-    const rx = Math.max(0, Math.min(1, region.x0 ?? 0));
-    const ry = Math.max(0, Math.min(1, region.y0 ?? 0));
-    const rw = Math.max(0.05, Math.min(1, region.vw ?? 1));
-    const rh = Math.max(0.05, Math.min(1, region.vh ?? 1));
-    const left = Math.round(rx * rgb.width);
-    const top = Math.round(ry * rgb.height);
+    const rx = clampNumber(finiteNumber(region.x0, 0), 0, 1);
+    const ry = clampNumber(finiteNumber(region.y0, 0), 0, 1);
+    const rw = clampNumber(finiteNumber(region.vw, 1), 0.05, 1);
+    const rh = clampNumber(finiteNumber(region.vh, 1), 0.05, 1);
+    const left = clampNumber(Math.round(rx * rgb.width), 0, Math.max(0, rgb.width - 1));
+    const top = clampNumber(Math.round(ry * rgb.height), 0, Math.max(0, rgb.height - 1));
     let cw = Math.round(rw * rgb.width);
     let ch = Math.round(rh * rgb.height);
-    cw = Math.min(cw, rgb.width - left);
-    ch = Math.min(ch, rgb.height - top);
+    cw = clampNumber(cw, 1, rgb.width - left);
+    ch = clampNumber(ch, 1, rgb.height - top);
     if (cw > 8 && ch > 8 && (cw < rgb.width || ch < rgb.height)) {
       pipeline = pipeline.extract({ left, top, width: cw, height: ch });
       // 放大区域：按原生像素发送（不放大），并用 4:4:4 保留文字锐度

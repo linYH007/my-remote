@@ -9,6 +9,7 @@
     "start": "node src/server.js",
     "host:remote": "node src/remote-host.js",
     "signaling": "node signaling/server.js",
+    "check": "node scripts/check.mjs",
     "shortcuts": "node scripts/create-desktop-shortcuts.mjs",
     "launch": "node scripts/launch.mjs",
     "stop": "node scripts/stop.mjs",
