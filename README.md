@@ -140,6 +140,7 @@ npm run host:remote
 | `FRAME_QUALITY` | `55` | JPEG 质量 |
 | `KEEP_AWAKE` | `1` | Windows 下运行时保持唤醒；设为 `0` 可关闭 |
 | `KEEP_AWAKE_DISPLAY` | `1` | 保持屏幕不熄灭；设为 `0` 只防睡眠 |
+| `WAKE_SCREEN` | `1` | 远控连接/点击/双击/按键时尝试唤醒锁屏界面 |
 
 ### 跨网络被控端 (`npm run host:remote`)
 
@@ -152,6 +153,7 @@ npm run host:remote
 | `WEBRTC_TIMEOUT_MS` | `15000` | P2P 超时后切中继 |
 | `KEEP_AWAKE` | `1` | Windows 下运行时保持唤醒；设为 `0` 可关闭 |
 | `KEEP_AWAKE_DISPLAY` | `1` | 保持屏幕不熄灭；设为 `0` 只防睡眠 |
+| `WAKE_SCREEN` | `1` | 远控连接/点击/双击/按键时尝试唤醒锁屏界面 |
 
 ---
 
@@ -161,7 +163,7 @@ npm run host:remote
 - 仅主显示器；无文件传输、剪贴板、多显示器。
 - 跨网络安全为口令 + 房间隔离，未做端到端加密（生产环境建议 wss + DTLS/SRTP）。
 - 键盘映射基于美式布局。
-- Windows 手动锁屏或进入安全桌面后，普通用户态程序仍无法注入双击/键盘；`KEEP_AWAKE=1` 用于减少自动睡眠、熄屏、空闲锁屏。
+- Windows 手动锁屏或进入安全桌面后，项目会用 `WAKE_SCREEN=1` 尝试唤醒显示器和登录输入界面；但普通用户态程序仍不能绕过 Windows 密码。向日葵/ToDesk 类完整锁屏控制通常依赖常驻系统服务、签名驱动或凭据组件。
 
 ## 目录结构
 

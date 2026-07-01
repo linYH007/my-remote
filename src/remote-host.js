@@ -7,6 +7,7 @@ import * as input from './input.js';
 import { handleInputMessage } from './protocol.js';
 import { getRtcConfiguration } from './ice-config.js';
 import { startKeepAwake } from './keep-awake.js';
+import { wakeScreenSoon } from './wake-screen.js';
 
 const SIGNAL_URL = process.env.SIGNAL_URL;
 const PROXY_URL = process.env.PROXY_URL || '';
@@ -144,6 +145,7 @@ function connectSignaling() {
       case 'peer-present':
       case 'peer-joined':
         currentRegion = null;
+        wakeScreenSoon('remote peer joined', { force: true });
         console.log('[signaling] 控制端已加入，开始建立连接…');
         await startPeerTransport();
         break;

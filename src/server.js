@@ -9,6 +9,7 @@ import { captureFrame, getLogicalSize, refreshLogicalSize } from './capture.js';
 import * as input from './input.js';
 import { handleInputMessage } from './protocol.js';
 import { startKeepAwake } from './keep-awake.js';
+import { wakeScreenSoon } from './wake-screen.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -53,6 +54,7 @@ wss.on('connection', async (ws, req) => {
   }
 
   console.log('[ws] 控制端已连接:', req.socket.remoteAddress);
+  wakeScreenSoon('LAN client connected', { force: true });
   await refreshLogicalSize();
   ws.send(JSON.stringify({ type: 'info', size: getLogicalSize() }));
 

@@ -1,4 +1,5 @@
 import { mouse, keyboard, Button, Key, Point, clipboard } from '@nut-tree-fork/nut-js';
+import { wakeScreen, wakeScreenSoon } from './wake-screen.js';
 
 // 关闭动作之间的人为延迟，降低远程操作延迟。
 try {
@@ -56,6 +57,7 @@ export async function moveMouse(x, y) {
 }
 
 export async function mouseDown(button = 'left') {
+  wakeScreenSoon('mouse down');
   await mouse.pressButton(buttonMap[button] ?? Button.LEFT);
 }
 
@@ -64,12 +66,14 @@ export async function mouseUp(button = 'left') {
 }
 
 export async function clickMouse(button = 'left', x, y) {
+  wakeScreenSoon('mouse click');
   const b = buttonMap[button] ?? Button.LEFT;
   await mouse.setPosition(new Point(Math.round(x), Math.round(y)));
   await mouse.click(b);
 }
 
 export async function doubleClick(button = 'left', x, y) {
+  await wakeScreen('mouse double click', { force: true });
   const b = buttonMap[button] ?? Button.LEFT;
   if (x != null && y != null) {
     await mouse.setPosition(new Point(Math.round(x), Math.round(y)));
@@ -91,6 +95,7 @@ export async function scroll(dx = 0, dy = 0) {
 }
 
 export async function keyDown(code) {
+  wakeScreenSoon('key down');
   const key = codeToKey[code];
   if (key !== undefined) await keyboard.pressKey(key);
 }
@@ -105,6 +110,7 @@ let typeQueue = Promise.resolve();
 
 export async function typeText(text) {
   if (!text) return;
+  wakeScreenSoon('type text');
   typeQueue = typeQueue.then(() => typeTextImpl(text)).catch((err) => {
     console.error('[input] typeText failed:', err.message);
   });

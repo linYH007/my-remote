@@ -21,6 +21,8 @@ set "TOKEN=abc123"
 
 REM 远控运行期间保持唤醒，尽量防止自动睡眠/熄屏/锁屏；0=关闭
 set "KEEP_AWAKE=1"
+REM 远控连接/点击/双击/按键时尝试唤醒锁屏界面；0=关闭
+set "WAKE_SCREEN=1"
 
 REM 以下为 full 模式(本地信令+穿透)才需要，host-only 模式留空即可
 set "TUNNEL_MODE=auto"
