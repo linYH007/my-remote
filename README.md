@@ -138,6 +138,8 @@ npm run host:remote
 | `FRAME_INTERVAL_MS` | `90` | 采集间隔 |
 | `FRAME_WIDTH` | `1366` | 画面宽度 |
 | `FRAME_QUALITY` | `55` | JPEG 质量 |
+| `KEEP_AWAKE` | `1` | Windows 下运行时保持唤醒；设为 `0` 可关闭 |
+| `KEEP_AWAKE_DISPLAY` | `1` | 保持屏幕不熄灭；设为 `0` 只防睡眠 |
 
 ### 跨网络被控端 (`npm run host:remote`)
 
@@ -148,6 +150,8 @@ npm run host:remote
 | `TOKEN` | 随机 | 访问口令 |
 | `TURN_URL` / `TURN_USER` / `TURN_PASS` | 无 | TURN 中继（可选） |
 | `WEBRTC_TIMEOUT_MS` | `15000` | P2P 超时后切中继 |
+| `KEEP_AWAKE` | `1` | Windows 下运行时保持唤醒；设为 `0` 可关闭 |
+| `KEEP_AWAKE_DISPLAY` | `1` | 保持屏幕不熄灭；设为 `0` 只防睡眠 |
 
 ---
 
@@ -157,6 +161,7 @@ npm run host:remote
 - 仅主显示器；无文件传输、剪贴板、多显示器。
 - 跨网络安全为口令 + 房间隔离，未做端到端加密（生产环境建议 wss + DTLS/SRTP）。
 - 键盘映射基于美式布局。
+- Windows 手动锁屏或进入安全桌面后，普通用户态程序仍无法注入双击/键盘；`KEEP_AWAKE=1` 用于减少自动睡眠、熄屏、空闲锁屏。
 
 ## 目录结构
 

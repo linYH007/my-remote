@@ -6,6 +6,7 @@ import { captureFrame, getLogicalSize, refreshLogicalSize } from './capture.js';
 import * as input from './input.js';
 import { handleInputMessage } from './protocol.js';
 import { getRtcConfiguration } from './ice-config.js';
+import { startKeepAwake } from './keep-awake.js';
 
 const SIGNAL_URL = process.env.SIGNAL_URL;
 const PROXY_URL = process.env.PROXY_URL || '';
@@ -357,4 +358,5 @@ console.log(`访问口令 (TOKEN): ${TOKEN}`);
 console.log('请将以上 ROOM + TOKEN 告知控制端用户');
 console.log('==================================================');
 
+startKeepAwake('remote host');
 connectSignaling();

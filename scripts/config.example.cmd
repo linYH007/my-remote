@@ -19,6 +19,9 @@ REM 固定设备码与密码 - 手机端每次输入这两个
 set "ROOM=myroom01"
 set "TOKEN=abc123"
 
+REM 远控运行期间保持唤醒，尽量防止自动睡眠/熄屏/锁屏；0=关闭
+set "KEEP_AWAKE=1"
+
 REM 以下为 full 模式(本地信令+穿透)才需要，host-only 模式留空即可
 set "TUNNEL_MODE=auto"
 set "NGROK_AUTHTOKEN="

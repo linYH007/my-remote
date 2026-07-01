@@ -8,6 +8,7 @@ import { WebSocketServer } from 'ws';
 import { captureFrame, getLogicalSize, refreshLogicalSize } from './capture.js';
 import * as input from './input.js';
 import { handleInputMessage } from './protocol.js';
+import { startKeepAwake } from './keep-awake.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -106,6 +107,7 @@ function getLanAddresses() {
 }
 
 server.listen(PORT, () => {
+  startKeepAwake('LAN host');
   console.log('================ 远程控制 MVP 已启动 ================');
   console.log(`访问口令 (TOKEN): ${TOKEN}`);
   console.log('在同一局域网的设备浏览器中打开下列任一地址：');
