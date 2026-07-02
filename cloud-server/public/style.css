@@ -18,6 +18,7 @@
   --shadow-lg: 0 20px 50px rgba(15, 23, 42, 0.12);
   --radius: 16px;
   --radius-sm: 10px;
+  --session-bar-height: 52px;
   --font: "DM Sans", -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
 }
 
@@ -33,6 +34,8 @@ html, body {
   color: var(--text);
   background: var(--bg);
   overflow: hidden;
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 /* ========== 首页布局 ========== */
@@ -40,6 +43,7 @@ html, body {
 .app-shell {
   display: flex;
   height: 100%;
+  min-height: 100dvh;
 }
 
 .sidebar {
@@ -291,6 +295,10 @@ html, body {
   justify-content: center;
   transition: all 0.15s;
   flex-shrink: 0;
+}
+
+.icon-btn[hidden] {
+  display: none !important;
 }
 
 .icon-btn svg {
@@ -550,6 +558,7 @@ html, body {
   display: flex;
   flex-direction: column;
   height: 100%;
+  min-height: 100dvh;
   background: #0b0f14;
 }
 
@@ -565,7 +574,7 @@ html, body {
   display: flex;
   align-items: center;
   gap: 16px;
-  height: 52px;
+  min-height: var(--session-bar-height);
   padding: 0 16px;
   background: linear-gradient(180deg, #151b24 0%, #111820 100%);
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
@@ -656,7 +665,7 @@ html, body {
 
 .screen {
   max-width: 100vw;
-  max-height: calc(100vh - 52px);
+  max-height: calc(100dvh - var(--session-bar-height));
   width: auto;
   height: auto;
   cursor: crosshair;
@@ -667,6 +676,58 @@ html, body {
   transform: translateZ(0);
   -webkit-user-select: none;
   user-select: none;
+}
+
+@media (max-width: 720px) {
+  :root {
+    --session-bar-height: 48px;
+  }
+
+  .session-bar {
+    gap: 8px;
+    padding: 0 8px;
+  }
+
+  .session-left,
+  .session-right {
+    gap: 6px;
+  }
+
+  .session-center {
+    display: none;
+  }
+
+  .session-title {
+    max-width: 32vw;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .icon-btn,
+  .btn--danger,
+  .btn--type {
+    min-width: 38px;
+    height: 38px;
+  }
+
+  .btn--danger {
+    padding: 0 10px;
+  }
+}
+
+@media (max-width: 460px) {
+  .session-title {
+    display: none;
+  }
+
+  .session-info {
+    gap: 6px;
+  }
+
+  .session-right {
+    margin-left: auto;
+  }
 }
 
 .zoom-hint {

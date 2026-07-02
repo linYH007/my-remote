@@ -2,7 +2,7 @@
 const appHome = document.getElementById('appHome');
 const appSession = document.getElementById('appSession');
 const canvas = document.getElementById('screen');
-const ctx = canvas.getContext('2d', { alpha: false });
+const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
 ctx.imageSmoothingEnabled = true;
 ctx.imageSmoothingQuality = 'high';
 const stage = document.getElementById('stage');
@@ -26,6 +26,7 @@ const disconnectBtn = document.getElementById('disconnectBtn');
 const backHomeBtn = document.getElementById('backHomeBtn');
 const fullscreenBtn = document.getElementById('fullscreenBtn');
 const screenshotBtn = document.getElementById('screenshotBtn');
+const resetViewBtn = document.getElementById('resetViewBtn');
 const typeBtn = document.getElementById('typeBtn');
 const mobileKbdBar = document.getElementById('mobileKbdBar');
 const mobileTextInput = document.getElementById('mobileTextInput');
@@ -78,6 +79,7 @@ let pingTimer = null;
 let sessionParams = null;
 let reconnectAttempt = 0;
 let hadSuccessfulSession = false;
+let controllerWakeLock = null;
 
 // ========== 设置持久化 ==========
 
@@ -185,9 +187,29 @@ async function copyText(text) {
   }
 }
 
+async function requestControllerWakeLock() {
+  if (!('wakeLock' in navigator) || controllerWakeLock || document.visibilityState !== 'visible') return;
+  try {
+    controllerWakeLock = await navigator.wakeLock.request('screen');
+    controllerWakeLock.addEventListener('release', () => {
+      controllerWakeLock = null;
+    }, { once: true });
+  } catch {
+    controllerWakeLock = null;
+  }
+}
+
+async function releaseControllerWakeLock() {
+  const lock = controllerWakeLock;
+  controllerWakeLock = null;
+  if (!lock) return;
+  try { await lock.release(); } catch { /* ignore */ }
+}
+
 function showHome() {
   appHome.hidden = false;
   appSession.hidden = true;
+  releaseControllerWakeLock();
   startHostPoll();
 }
 
@@ -200,6 +222,7 @@ function showSession(title) {
   frameMetaSupported = false;
   incomingFrameRegion = FULL_REGION;
   resetViewport();
+  requestControllerWakeLock();
   stopHostPoll();
 }
 
@@ -318,7 +341,7 @@ function startHostPoll() {
   hostPollTimer = setInterval(() => {
     pollHostStatus();
     updateShareDisplay();
-  }, 2500);
+  }, 5000);
 }
 
 function stopHostPoll() {
@@ -469,6 +492,10 @@ async function takeScreenshot() {
 }
 
 screenshotBtn.addEventListener('click', () => { takeScreenshot(); });
+
+resetViewBtn?.addEventListener('click', () => {
+  resetViewport();
+});
 
 function cleanupPeerConnection() {
   if (dc) {
@@ -796,6 +823,7 @@ function applyViewport({ syncRemote = true } = {}) {
   // 画面由被控端按区域采集，这里不做 CSS 缩放
   queueViewportPaint();
   zoomHint.hidden = view.zoom <= 1.01;
+  if (resetViewBtn) resetViewBtn.hidden = view.zoom <= 1.01;
   if (!zoomHint.hidden) {
     zoomHint.textContent = `${view.zoom.toFixed(1)}× 高清 · 双指缩放 · 双击还原`;
   }
@@ -1412,6 +1440,12 @@ window.addEventListener('keyup', (e) => {
   if (!connected || isTouchDevice) return;
   e.preventDefault();
   sendInput({ t: 'ku', code: e.code });
+});
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && !appSession.hidden) {
+    requestControllerWakeLock();
+  }
 });
 
 // ========== 初始化 ==========
