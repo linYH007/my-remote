@@ -55,7 +55,7 @@ const ICE_SERVERS = [{ urls: 'stun:stun.l.google.com:19302' }];
 const STORAGE_KEY = 'remote-control-settings';
 const RECONNECT_MIN_MS = 1000;
 const RECONNECT_MAX_MS = 10000;
-const VIEW_SEND_INTERVAL_MS = 90;
+const VIEW_SEND_INTERVAL_MS = 45;
 const MOVE_SEND_INTERVAL_MS = 12;
 const INPUT_BUFFER_LIMIT = 256_000;
 
@@ -197,6 +197,8 @@ function showSession(title) {
   sessionTitle.textContent = title || '远程桌面';
   sessionLoading.hidden = false;
   gotFirstFrame = false;
+  frameMetaSupported = false;
+  incomingFrameRegion = FULL_REGION;
   resetViewport();
   stopHostPoll();
 }
@@ -562,6 +564,9 @@ function connectRemote(signalUrl, room, token, isReconnect = false) {
       case 'info':
         handleInfoMessage(JSON.stringify(msg));
         break;
+      case 'framemeta':
+        applyFrameMeta(msg);
+        break;
       case 'mode':
         if (msg.mode !== 'webrtc') cleanupPeerConnection();
         setConnected(true);
@@ -628,7 +633,7 @@ function connectLan(token, isReconnect = false) {
     startPing();
   };
   ws.onmessage = (event) => {
-    if (typeof event.data === 'string') { handleInfoMessage(event.data); return; }
+    if (typeof event.data === 'string') { handleTextMessage(event.data); return; }
     onFrame(event.data);
   };
   ws.onclose = (event) => {
@@ -665,7 +670,7 @@ async function handleOffer(sdp) {
       setTransport('webrtc');
     };
     dc.onmessage = (ev) => {
-      if (typeof ev.data === 'string') { handleInfoMessage(ev.data); return; }
+      if (typeof ev.data === 'string') { handleTextMessage(ev.data); return; }
       onFrame(ev.data);
     };
     dc.onclose = () => requestRelayFallback();
@@ -693,9 +698,9 @@ function handleInfoMessage(data) {
 
 const view = { zoom: 1, panX: 0.5, panY: 0.5 };
 const VIEW_ZOOM_MIN = 1;
-const VIEW_ZOOM_MAX = 6;
-const WHEEL_ZOOM_SPEED = 0.006;
-const PINCH_ZOOM_SPEED = 1.45;
+const VIEW_ZOOM_MAX = 4;
+const WHEEL_ZOOM_SPEED = 0.0045;
+const PINCH_ZOOM_SPEED = 1.25;
 const PAN_SPEED = 2.2;
 const PAN_START_PX = 5;
 
@@ -823,6 +828,29 @@ let latestFrame = null;
 let frameDrawScheduled = false;
 let decodingFrame = false;
 
+// 每帧对应的被控端采集区域。被控端会在区域变化时通过 framemeta 告知，
+// 据此把画面精确定位到真实位置，放大平移时才不会每帧「吸附」抖动。
+const FULL_REGION = { x0: 0, y0: 0, vw: 1, vh: 1 };
+let incomingFrameRegion = FULL_REGION;
+let frameMetaSupported = false; // 收到过 framemeta 才启用精确定位，否则回退旧行为（兼容旧被控端/信令）
+
+function applyFrameMeta(msg) {
+  frameMetaSupported = true;
+  const r = msg.region;
+  incomingFrameRegion = (r && Number.isFinite(r.vw) && Number.isFinite(r.vh))
+    ? { x0: r.x0, y0: r.y0, vw: r.vw, vh: r.vh }
+    : FULL_REGION;
+}
+
+// 统一处理文本消息：优先识别 framemeta，其余交给原有逻辑。
+function handleTextMessage(data) {
+  try {
+    const m = JSON.parse(data);
+    if (m && m.type === 'framemeta') { applyFrameMeta(m); return; }
+  } catch { /* ignore */ }
+  handleInfoMessage(data);
+}
+
 function onFrame(arrayBuffer) {
   bytesCount += arrayBuffer.byteLength;
   frameCount += 1;
@@ -865,7 +893,8 @@ async function drawFrame(arrayBuffer) {
     }
     ctx.drawImage(bitmap, 0, 0);
     bitmap.close();
-    renderedRegion = getVisibleRegion();
+    // 用这帧真实的采集区域定位（被控端告知）；无 framemeta 时回退到旧的近似行为。
+    renderedRegion = frameMetaSupported ? incomingFrameRegion : getVisibleRegion();
     queueViewportPaint();
   } catch { /* ignore */ }
 }

@@ -158,6 +158,7 @@ wss.on('connection', (ws) => {
       case 'info':
       case 'mode':
       case 'text-focus':
+      case 'framemeta':
       case 'relay':
         if (!ws.roomId || !ws.role) return;
         forwardJson(rooms.get(ws.roomId), ws.role, msg);

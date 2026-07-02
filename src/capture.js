@@ -29,13 +29,16 @@ export async function refreshLogicalSize() {
 
 /**
  * 采集一帧屏幕并编码为 JPEG。
- * @param {{ width?: number, quality?: number, region?: {x0:number,y0:number,vw:number,vh:number}|null }} opts
+ * @param {{ width?: number, quality?: number, region?: {x0:number,y0:number,vw:number,vh:number}|null, mozjpeg?: boolean }} opts
  *   width   - 目标宽度上限（按比例缩放，控制带宽与帧率，绝不放大）
  *   quality - JPEG 质量 1-100
  *   region  - 归一化裁剪区域 [0,1]，用于放大时只发送可视区域，保留原生清晰度
+ *   mozjpeg - 是否用 mozjpeg 编码。默认 false：mozjpeg 体积小 ~36% 但编码慢 ~4 倍
+ *             （2560×1440→1920 实测 86ms vs 20ms），会把实时帧率压到 ~12fps 并增加
+ *             每帧延迟。默认用 libjpeg-turbo 换取流畅度，带宽紧张时可经环境变量开启。
  * @returns {Promise<Buffer>} JPEG 二进制数据
  */
-export async function captureFrame({ width = 1366, quality = 55, region = null } = {}) {
+export async function captureFrame({ width = 1366, quality = 55, region = null, mozjpeg = false } = {}) {
   const image = await screen.grab();
   const rgb = await image.toRGB(); // nut-js 默认 BGRA，转换为 RGBA 供 sharp 正确编码
 
@@ -67,6 +70,6 @@ export async function captureFrame({ width = 1366, quality = 55, region = null }
 
   return pipeline
     .resize({ width: targetWidth, fit: 'inside', withoutEnlargement: true })
-    .jpeg({ quality, mozjpeg: true, chromaSubsampling: subsampling })
+    .jpeg({ quality, mozjpeg, chromaSubsampling: subsampling })
     .toBuffer();
 }

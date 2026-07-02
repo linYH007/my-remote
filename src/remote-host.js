@@ -17,6 +17,9 @@ const TOKEN = process.env.TOKEN || crypto.randomBytes(3).toString('hex');
 const FRAME_INTERVAL_MS = Number(process.env.FRAME_INTERVAL_MS) || 66;
 const FRAME_WIDTH = Number(process.env.FRAME_WIDTH) || 1920;
 const FRAME_QUALITY = Number(process.env.FRAME_QUALITY) || 72;
+// mozjpeg 体积更小但编码慢约 4 倍，会拖低帧率、增大延迟。默认关闭优先流畅度，
+// 带宽极紧张时可设 FRAME_MOZJPEG=1 换取更小的帧体积。
+const FRAME_MOZJPEG = process.env.FRAME_MOZJPEG === '1';
 const SKIP_WEBRTC = process.env.SKIP_WEBRTC === '1' || /^wss:/i.test(SIGNAL_URL || '');
 const WEBRTC_TIMEOUT_MS = SKIP_WEBRTC ? 0 : (Number(process.env.WEBRTC_TIMEOUT_MS) || 15000);
 const MAX_BUFFERED = Number(process.env.MAX_BUFFERED) || 3_000_000;
@@ -302,31 +305,49 @@ async function activateTransport(mode) {
   startCapture();
 }
 
+let lastSentRegionKey = '';
+
+function regionKey(r) {
+  return r ? `${r.x0.toFixed(4)},${r.y0.toFixed(4)},${r.vw.toFixed(4)},${r.vh.toFixed(4)}` : 'full';
+}
+
+// 采集并发送一帧。区域变化时先发一条 framemeta 说明这帧对应的采集区域，
+// 控制端据此在放大平移时精确定位画面，避免每帧「吸附」到过期位置造成卡顿。
+async function captureAndSend() {
+  if (busy || !transport) return;
+
+  const canSendWebRtc = transport === 'webrtc' && dc?.readyState === 'open' && dc.bufferedAmount < MAX_BUFFERED;
+  const canSendRelay = transport === 'relay' && ws?.readyState === WebSocket.OPEN && ws.bufferedAmount < MAX_BUFFERED;
+  if (!canSendWebRtc && !canSendRelay) return;
+  // 网络拥塞时跳帧，优先保证流畅
+  if (transport === 'relay' && ws.bufferedAmount > MAX_BUFFERED * 0.85) return;
+
+  busy = true;
+  const region = currentRegion;
+  try {
+    const frame = await captureFrame({ width: FRAME_WIDTH, quality: FRAME_QUALITY, region, mozjpeg: FRAME_MOZJPEG });
+    const key = regionKey(region);
+    const meta = key !== lastSentRegionKey ? JSON.stringify({ type: 'framemeta', region: region || null }) : null;
+    if (transport === 'webrtc' && dc?.readyState === 'open') {
+      if (meta) dc.send(meta);
+      dc.send(frame);
+      lastSentRegionKey = key;
+    } else if (transport === 'relay' && ws?.readyState === WebSocket.OPEN) {
+      if (meta) ws.send(meta);
+      ws.send(frame, { binary: true });
+      lastSentRegionKey = key;
+    }
+  } catch (err) {
+    console.error('[capture] 采集失败:', err.message);
+  } finally {
+    busy = false;
+  }
+}
+
 function startCapture() {
   stopCapture();
-  captureTimer = setInterval(async () => {
-    if (busy || !transport) return;
-
-    const canSendWebRtc = transport === 'webrtc' && dc?.readyState === 'open' && dc.bufferedAmount < MAX_BUFFERED;
-    const canSendRelay = transport === 'relay' && ws?.readyState === WebSocket.OPEN && ws.bufferedAmount < MAX_BUFFERED;
-    if (!canSendWebRtc && !canSendRelay) return;
-    // 网络拥塞时跳帧，优先保证流畅
-    if (transport === 'relay' && ws.bufferedAmount > MAX_BUFFERED * 0.85) return;
-
-    busy = true;
-    try {
-      const frame = await captureFrame({ width: FRAME_WIDTH, quality: FRAME_QUALITY, region: currentRegion });
-      if (transport === 'webrtc' && dc?.readyState === 'open') {
-        dc.send(frame);
-      } else if (transport === 'relay' && ws?.readyState === WebSocket.OPEN) {
-        ws.send(frame, { binary: true });
-      }
-    } catch (err) {
-      console.error('[capture] 采集失败:', err.message);
-    } finally {
-      busy = false;
-    }
-  }, FRAME_INTERVAL_MS);
+  lastSentRegionKey = ''; // 通道重建后，首帧重新声明当前区域
+  captureTimer = setInterval(captureAndSend, FRAME_INTERVAL_MS);
 }
 
 function stopCapture() {
@@ -344,6 +365,8 @@ async function handleInput(msg) {
     } else {
       currentRegion = { x0: msg.x0, y0: msg.y0, vw: msg.vw, vh: msg.vh };
     }
+    // 区域一变立即出一帧，不必等下个采集周期，缩短放大平移的画面延迟。
+    captureAndSend();
     return;
   }
   try {

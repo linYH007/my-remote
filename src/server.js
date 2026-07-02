@@ -21,6 +21,8 @@ const TOKEN = process.env.TOKEN || crypto.randomBytes(3).toString('hex');
 const FRAME_INTERVAL_MS = Number(process.env.FRAME_INTERVAL_MS) || 90; // 约 11 fps
 const FRAME_WIDTH = Number(process.env.FRAME_WIDTH) || 1366;
 const FRAME_QUALITY = Number(process.env.FRAME_QUALITY) || 55;
+// mozjpeg 体积小但编码慢约 4 倍，默认关闭优先流畅度；带宽紧张可设 FRAME_MOZJPEG=1
+const FRAME_MOZJPEG = process.env.FRAME_MOZJPEG === '1';
 const MAX_BUFFERED = 2_000_000; // 客户端积压超过该字节数则跳过本帧，避免延迟堆积
 
 const app = express();
@@ -60,18 +62,29 @@ wss.on('connection', async (ws, req) => {
 
   let busy = false;
   let currentRegion = null;
-  const timer = setInterval(async () => {
+  let lastRegionKey = '';
+  const regionKey = (r) => (r ? `${r.x0.toFixed(4)},${r.y0.toFixed(4)},${r.vw.toFixed(4)},${r.vh.toFixed(4)}` : 'full');
+
+  // 采集并发送一帧；区域变化时先发 framemeta，供控制端在放大平移时精确定位画面。
+  async function captureAndSend() {
     if (busy || ws.readyState !== ws.OPEN || ws.bufferedAmount > MAX_BUFFERED) return;
     busy = true;
+    const region = currentRegion;
     try {
-      const frame = await captureFrame({ width: FRAME_WIDTH, quality: FRAME_QUALITY, region: currentRegion });
+      const frame = await captureFrame({ width: FRAME_WIDTH, quality: FRAME_QUALITY, region, mozjpeg: FRAME_MOZJPEG });
+      const key = regionKey(region);
+      if (key !== lastRegionKey) {
+        ws.send(JSON.stringify({ type: 'framemeta', region: region || null }));
+        lastRegionKey = key;
+      }
       ws.send(frame);
     } catch (err) {
       console.error('[capture] 采集失败:', err.message);
     } finally {
       busy = false;
     }
-  }, FRAME_INTERVAL_MS);
+  }
+  const timer = setInterval(captureAndSend, FRAME_INTERVAL_MS);
 
   ws.on('message', async (raw) => {
     let msg;
@@ -82,6 +95,8 @@ wss.on('connection', async (ws, req) => {
     }
     if (msg && msg.t === 'view') {
       currentRegion = msg.full ? null : { x0: msg.x0, y0: msg.y0, vw: msg.vw, vh: msg.vh };
+      // 区域一变立即出一帧，缩短放大平移延迟。
+      captureAndSend();
       return;
     }
     try {

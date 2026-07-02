@@ -199,6 +199,7 @@ wss.on('connection', (ws) => {
       case 'info':
       case 'mode':
       case 'text-focus':
+      case 'framemeta': // 中继模式下把「帧对应的采集区域」转发给控制端，用于放大平移时正确定位画面
         if (!ws.roomId || !ws.role) return;
         forwardJson(rooms.get(ws.roomId), ws.role, msg);
         break;
